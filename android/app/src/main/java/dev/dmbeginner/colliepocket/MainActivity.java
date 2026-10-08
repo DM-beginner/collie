@@ -14,7 +14,6 @@ import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
@@ -32,7 +31,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -54,13 +52,11 @@ public final class MainActivity extends Activity {
     private FrameLayout content;
     private ProgressBar progress;
     private WebView web;
-    private View homeControls;
-    private TextView serverCaption;
-    private TextView computerTitle;
     private View errorPanel;
     private ValueCallback<Uri[]> fileCallback;
     private String server = "";
     private String failedUrl = "";
+    private String settingsScript;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -71,6 +67,7 @@ public final class MainActivity extends Activity {
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
         computers = new ComputerProfiles(preferences, getString(R.string.default_server), getString(R.string.default_computers));
         server = computers.active() == null ? "" : computers.active().address;
+        settingsScript = readAsset("pocket-settings.js");
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         getWindow().setStatusBarColor(BACKGROUND);
         getWindow().setNavigationBarColor(BACKGROUND);
@@ -94,85 +91,54 @@ public final class MainActivity extends Activity {
         root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
         buildWebView();
         content.addView(progress, new FrameLayout.LayoutParams(-1, dp(2), Gravity.TOP));
-        buildHomeControls();
+
         if (server.isEmpty()) showError("连接你的电脑", "填写电脑上的 Collie 地址，然后配对这台设备。");
         else if (state == null || web.restoreState(state) == null
                 || !ServerAddress.sameOrigin(server, web.getUrl())) web.loadUrl(server);
-        updateHomeControls(web.getUrl());
+
     }
 
-    private void buildHomeControls() {
-        LinearLayout section = new LinearLayout(this);
-        section.setPadding(dp(12), dp(8), dp(12), dp(8));
-        LinearLayout card = new LinearLayout(this);
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(12), dp(6), dp(4), dp(6));
-        android.graphics.drawable.GradientDrawable surface = new android.graphics.drawable.GradientDrawable();
-        surface.setColor(Color.rgb(24, 35, 32));
-        surface.setCornerRadius(dp(8));
-        surface.setStroke(dp(1), Color.rgb(55, 72, 64));
-        card.setBackground(surface);
-        LinearLayout labels = new LinearLayout(this);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        computerTitle = new TextView(this);
-        computerTitle.setTextColor(Color.rgb(159, 230, 184));
-        computerTitle.setTextSize(13);
-        labels.addView(computerTitle);
-        labels.setMinimumHeight(dp(48));
-        labels.setGravity(Gravity.CENTER_VERTICAL);
-        labels.setContentDescription("切换电脑");
-        labels.setOnClickListener(view -> showComputers());
-        serverCaption = new TextView(this);
-        serverCaption.setTextColor(Color.LTGRAY);
-        serverCaption.setTextSize(12);
-        serverCaption.setSingleLine(true);
-        serverCaption.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        labels.addView(serverCaption);
-        card.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-        Button menu = new Button(this, null, android.R.attr.borderlessButtonStyle);
-        menu.setText(R.string.connection_settings);
-        menu.setTextSize(14);
-        menu.setTextColor(Color.WHITE);
-        menu.setContentDescription(getString(R.string.app_settings));
-        card.addView(menu, new LinearLayout.LayoutParams(dp(72), dp(48)));
-        menu.setOnClickListener(view -> {
-            PopupMenu popup = new PopupMenu(this, menu);
-            String[] items = {"电脑管理", "配对这台设备", "刷新主页", "打开 Tailscale", "关于"};
-            for (int i = 0; i < items.length; i++) popup.getMenu().add(0, i, i, items[i]);
-            popup.setOnMenuItemClickListener(item -> {
-                switch (item.getItemId()) {
-                    case 0: showComputers(); break;
-                    case 1: showPairing(); break;
-                    case 2: if (!server.isEmpty()) web.reload(); break;
-                    case 3: openTailscale(); break;
-                    case 4: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.2")
-                        .setMessage("基于开源 Collie 的非官方安卓客户端（MIT）。\n\n电脑继续运行 Collie 与 herdr，手机使用 Tailscale 连接。配对凭据保存在此 App 中。\n\n源码：github.com/DM-beginner/collie，android-apk 分支。\n\n此版本提供前台查看和操作；系统通知、麦克风录音尚未接入。")
-                        .setNeutralButton("开源许可", (dialog, which) -> showLicense())
-                        .setPositiveButton("知道了", null).show(); break;
-                    default: return false;
-                }
-                return true;
-            });
-            popup.show();
-        });
-        section.addView(card, new LinearLayout.LayoutParams(-1, -2));
-        homeControls = section;
-        homeControls.setVisibility(View.GONE);
-        root.addView(homeControls, new LinearLayout.LayoutParams(-1, -2));
+    private void showAppSettings() {
+        String name = computers.active() == null ? "尚未添加电脑" : computers.active().name;
+        String[] items = {"切换 / 管理电脑", "配对这台设备", "刷新主页", "打开 Tailscale", "关于"};
+        new AlertDialog.Builder(this).setTitle("电脑连接 · " + name).setItems(items, (dialog, which) -> {
+            switch (which) {
+                case 0: showComputers(); break;
+                case 1: showPairing(); break;
+                case 2: if (!server.isEmpty()) { clearError(); web.loadUrl(server); } break;
+                case 3: openTailscale(); break;
+                case 4: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.3")
+                    .setMessage("基于开源 Collie 的非官方安卓客户端（MIT）。\n\n电脑继续运行 Collie 与 herdr，手机使用 Tailscale 连接。各台电脑的配对凭据分别保存在此 App 中。\n\n源码：github.com/DM-beginner/collie，android-apk 分支。\n\n此版本提供前台查看和操作；系统通知、麦克风录音尚未接入。")
+                    .setNeutralButton("开源许可", (about, button) -> showLicense())
+                    .setPositiveButton("知道了", null).show(); break;
+                default: break;
+            }
+        }).show();
+    }
+
+    private void installSettingsEntry(WebView view, String url) {
+        if (view != web || !ServerAddress.sameOrigin(server, url)) return;
+        JSONObject connection = new JSONObject();
+        try {
+            connection.put("name", computers.active() == null ? "尚未添加电脑" : computers.active().name);
+            connection.put("address", server.replaceFirst("^https?://", "").replaceFirst("/$", ""));
+            view.evaluateJavascript(settingsScript + "(" + connection + ");", null);
+        } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+    }
+
+    private String readAsset(String name) {
+        StringBuilder text = new StringBuilder();
+        try (java.io.Reader reader = new java.io.InputStreamReader(getAssets().open(name), java.nio.charset.StandardCharsets.UTF_8)) {
+            char[] buffer = new char[2048]; int count;
+            while ((count = reader.read(buffer)) != -1) text.append(buffer, 0, count);
+            return text.toString();
+        } catch (java.io.IOException error) { throw new IllegalStateException("Missing application asset: " + name, error); }
     }
 
     private boolean isHome(String url) {
         if (!ServerAddress.sameOrigin(server, url)) return false;
         String path = Uri.parse(url).getPath();
         return path == null || path.isEmpty() || "/".equals(path);
-    }
-
-    private void updateHomeControls(String url) {
-        if (homeControls == null) return;
-        computerTitle.setText(computers.active() == null ? "添加电脑  ▾" : computers.active().name + "  ▾");
-        serverCaption.setText(server.isEmpty() ? getString(R.string.connection_unset)
-                : server.replaceFirst("^https?://", "").replaceFirst("/$", ""));
-        homeControls.setVisibility(server.isEmpty() || errorPanel != null || isHome(url) ? View.VISIBLE : View.GONE);
     }
 
     private void buildWebView() {
@@ -187,12 +153,21 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.3");
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (view != web) return true;
+                Uri uri = request.getUrl();
+                if ("collie-pocket".equals(uri.getScheme())) {
+                    // Only an explicit top-level tap on our configured Collie page opens native controls.
+                    if (request.isForMainFrame() && request.hasGesture()
+                            && ServerAddress.sameOrigin(server, view.getUrl())
+                            && "settings".equals(uri.getHost()) && "/connection".equals(uri.getPath())
+                            && uri.getQuery() == null && uri.getFragment() == null) showAppSettings();
+                    return true;
+                }
                 String destination = request.getUrl().toString();
                 if (ServerAddress.sameOrigin(server, destination)) return false;
                 if (request.isForMainFrame() && request.hasGesture()) openExternal(request.getUrl());
@@ -202,17 +177,18 @@ public final class MainActivity extends Activity {
                 if (view != web) return;
                 failedUrl = "";
                 progress.setVisibility(View.VISIBLE);
-                updateHomeControls(url);
+
                 clearError();
             }
             @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) {
                 if (view != web) return;
-                updateHomeControls(url); // Includes React Router's pushState/replaceState navigations.
+                installSettingsEntry(view, url);
             }
             @Override public void onPageFinished(WebView view, String url) {
                 if (view != web) return;
                 progress.setVisibility(View.GONE);
-                updateHomeControls(url);
+
+                installSettingsEntry(view, url);
                 CookieManager.getInstance().flush();
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
@@ -300,7 +276,7 @@ public final class MainActivity extends Activity {
         web = null;
         previous.stopLoading(); content.removeView(previous); previous.destroy();
         buildWebView();
-        updateHomeControls(server);
+
         if (server.isEmpty()) showError("连接你的电脑", "添加 Windows 或 Mac 的 Collie 地址，再分别完成配对。");
         else web.loadUrl(server);
     }
@@ -455,7 +431,7 @@ public final class MainActivity extends Activity {
         settings.setOnClickListener(view -> showComputers()); panel.addView(settings);
         errorPanel = panel;
         content.addView(panel, new FrameLayout.LayoutParams(-1, -1));
-        updateHomeControls(web.getUrl());
+
     }
     private void clearError() { if (errorPanel != null) { content.removeView(errorPanel); errorPanel = null; } }
     private void openTailscale() {

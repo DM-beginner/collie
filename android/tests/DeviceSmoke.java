@@ -7,6 +7,11 @@ import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.MotionEvent;
+import android.view.KeyEvent;
+import android.os.SystemClock;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.graphics.Rect;
 import android.webkit.WebView;
 import android.widget.TextView;
 import org.json.JSONObject;
@@ -62,13 +67,12 @@ public final class DeviceSmoke extends Instrumentation {
                     || facts.optInt("paired") != 200 || !facts.optBoolean("missingPane")) {
                 throw new AssertionError("Pairing gate failed: " + facts);
             }
-            AtomicReference<View> settings = new AtomicReference<>();
             runOnMainSync(() -> {
                 View decor = activity.getWindow().getDecorView();
-                settings.set(findSettings(decor));
-                if (settings.get() == null || !settings.get().isShown()) throw new AssertionError("Home settings missing");
+                if (findSettings(decor) != null) throw new AssertionError("Native home connection footer remains");
                 if (hasTitle(decor)) throw new AssertionError("Persistent app toolbar remains");
             });
+            testSettingsEntry(activity, web);
             // Agent rows are accessible buttons, rather than links; wait for the router's first render.
             String paneButton = "Array.from(document.querySelectorAll('button')).find(function(b){return b.querySelector('[aria-label$=\" logo\"]');})";
             waitFor(web, "!!(" + paneButton + ")");
@@ -76,7 +80,7 @@ public final class DeviceSmoke extends Instrumentation {
             if (!"true".equals(navigation)) throw new AssertionError("No session button on home");
             waitFor(web, "location.pathname.indexOf('/pane/')===0");
             runOnMainSync(() -> {
-                if (settings.get().isShown()) throw new AssertionError("Home controls occupy session space");
+                if (findSettings(activity.getWindow().getDecorView()) != null) throw new AssertionError("Connection controls occupy session space");
                 View root = activity.findViewById(android.R.id.content);
                 int[] rootPosition = new int[2], webPosition = new int[2];
                 root.getLocationOnScreen(rootPosition); web.getLocationOnScreen(webPosition);
@@ -85,16 +89,75 @@ public final class DeviceSmoke extends Instrumentation {
                 activity.onBackPressed();
             });
             waitFor(web, "location.pathname==='/'");
-            runOnMainSync(() -> {
-                if (!settings.get().isShown()) throw new AssertionError("Back does not restore home settings");
-            });
             testSwitching(activity);
-            result.putString("result", "PASS: profile migration, validation and persistence; two origins keep separate storage; switching clears navigation; original pairing retained; auth gate enforced; session uses full height; Back restores home settings.");
+            result.putString("result", "PASS: Settings gear exposes computer controls; native entry requires a user tap; original settings preserved; home footer removed; profile persistence and origin isolation; original pairing retained; auth gate enforced; session uses full height.");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
             result.putString("result", "FAIL: " + error.getClass().getSimpleName() + ": " + error.getMessage());
             finish(Activity.RESULT_CANCELED, result);
         }
+    }
+    private void testSettingsEntry(Activity activity, WebView web) throws Exception {
+        String gear = "Array.from(document.querySelectorAll('header button')).find(function(b){return ['Settings','设置'].indexOf(b.getAttribute('aria-label'))>=0;})";
+        waitFor(web, "!!(" + gear + ")");
+        evaluate(web, "(" + gear + ").click();true");
+        waitFor(web, "location.pathname==='/settings'");
+        String entry = "document.querySelector('a[role=\"button\"][aria-label=\"电脑连接\"]')";
+        waitFor(web, "!!(" + entry + ")");
+        if (!"true".equals(evaluate(web, "document.querySelectorAll('main button').length>=4")))
+            throw new AssertionError("Original Settings sections disappeared");
+        evaluate(web, "(" + entry + ").click();true");
+        waitForIdleSync();
+        if (accessibleText("切换 / 管理电脑") != null) throw new AssertionError("Scripted navigation opened native controls without a user gesture");
+        tapWeb(web, entry);
+        waitForText("切换 / 管理电脑");
+        tapText("切换 / 管理电脑");
+        waitForText("我的电脑");
+        sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        waitForIdleSync();
+        runOnMainSync(activity::onBackPressed);
+        waitFor(web, "location.pathname==='/'");
+        waitFor(web, "!(" + entry + ")");
+        // The root holds only the page, with no second footer below the WebView.
+        runOnMainSync(() -> {
+            ViewGroup root = (ViewGroup)((ViewGroup)activity.findViewById(android.R.id.content)).getChildAt(0);
+            if (root.getChildCount() != 1) throw new AssertionError("Extra native home UI consumes page height");
+        });
+    }
+    private void tapWeb(WebView web, String element) throws Exception {
+        String value = evaluate(web, "(function(){var e=" + element + ";e.scrollIntoView({block:'center'});var r=e.getBoundingClientRect();return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,scale:devicePixelRatio});})()");
+        JSONObject point = new JSONObject((String)new JSONTokener(value).nextValue());
+        int[] position = new int[2];
+        runOnMainSync(() -> web.getLocationOnScreen(position));
+        tap((float)(position[0] + point.getDouble("x")*point.getDouble("scale")),
+                (float)(position[1] + point.getDouble("y")*point.getDouble("scale")));
+    }
+    private void tap(float x, float y) {
+        long now = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0);
+        MotionEvent up = MotionEvent.obtain(now, now+50, MotionEvent.ACTION_UP, x, y, 0);
+        sendPointerSync(down); sendPointerSync(up);
+        down.recycle(); up.recycle();
+        waitForIdleSync();
+    }
+    private AccessibilityNodeInfo accessibleText(String text) {
+        AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
+        if (root == null) return null;
+        java.util.List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(text);
+        return nodes.isEmpty() ? null : nodes.get(0);
+    }
+    private void waitForText(String text) throws Exception {
+        long deadline = System.currentTimeMillis()+10000;
+        while (accessibleText(text) == null) {
+            if (System.currentTimeMillis()>deadline) throw new AssertionError("Missing control: " + text);
+            Thread.sleep(100);
+        }
+    }
+    private void tapText(String text) {
+        AccessibilityNodeInfo node = accessibleText(text);
+        if (node == null) throw new AssertionError("Missing control: " + text);
+        Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+        tap(bounds.exactCenterX(), bounds.exactCenterY());
     }
     private void testProfiles() {
         SharedPreferences preferences = getTargetContext().getSharedPreferences("profiles-smoke", 0);

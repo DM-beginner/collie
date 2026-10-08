@@ -234,6 +234,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **An Android client opens Collie in its own app.** The optional `android/` project adds a WebView client with native connection settings, device pairing, file selection, a signed APK builder and a virtual-device preview launcher. The existing bridge and web UI stay independently deployed.
 - **Android settings live on the home screen.** Collie Pocket 0.1.1 removes the permanent app toolbar, groups connection and pairing controls in a compact home card, and gives sessions the full available height. Existing pairing and view preferences survive an in-place APK update.
 - **Android keeps a separate connection for each computer.** Collie Pocket 0.1.2 adds named computer profiles, home-screen switching and profile management. Existing connections migrate automatically; pairing and view preferences remain scoped to each server's origin, and switching drops the previous page and navigation history.
+- **Android connection controls join the existing Settings page.** Collie Pocket 0.1.3 removes the home connection footer and adds a computer-connection entry behind Collie's top-right Settings gear. The entry opens native computer management and pairing without replacing Collie's settings or changing either computer's server.
 
 ## [1.17.2] - 2026-10-06
 
