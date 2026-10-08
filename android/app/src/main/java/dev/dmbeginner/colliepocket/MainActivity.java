@@ -49,12 +49,14 @@ public final class MainActivity extends Activity {
     private static final int BACKGROUND = Color.rgb(16, 24, 23);
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private SharedPreferences preferences;
+    private ComputerProfiles computers;
     private LinearLayout root;
     private FrameLayout content;
     private ProgressBar progress;
     private WebView web;
     private View homeControls;
     private TextView serverCaption;
+    private TextView computerTitle;
     private View errorPanel;
     private ValueCallback<Uri[]> fileCallback;
     private String server = "";
@@ -67,6 +69,8 @@ public final class MainActivity extends Activity {
                     android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::navigateBack);
         }
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
+        computers = new ComputerProfiles(preferences, getString(R.string.default_server), getString(R.string.default_computers));
+        server = computers.active() == null ? "" : computers.active().address;
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         getWindow().setStatusBarColor(BACKGROUND);
         getWindow().setNavigationBarColor(BACKGROUND);
@@ -91,9 +95,6 @@ public final class MainActivity extends Activity {
         buildWebView();
         content.addView(progress, new FrameLayout.LayoutParams(-1, dp(2), Gravity.TOP));
         buildHomeControls();
-        String saved = preferences.getString("server", getString(R.string.default_server));
-        try { if (saved != null && !saved.isEmpty()) server = ServerAddress.normalize(saved); }
-        catch (IllegalArgumentException ignored) { server = ""; }
         if (server.isEmpty()) showError("连接你的电脑", "填写电脑上的 Collie 地址，然后配对这台设备。");
         else if (state == null || web.restoreState(state) == null
                 || !ServerAddress.sameOrigin(server, web.getUrl())) web.loadUrl(server);
@@ -113,11 +114,14 @@ public final class MainActivity extends Activity {
         card.setBackground(surface);
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
-        TextView title = new TextView(this);
-        title.setText(R.string.connection_title);
-        title.setTextColor(Color.rgb(159, 230, 184));
-        title.setTextSize(13);
-        labels.addView(title);
+        computerTitle = new TextView(this);
+        computerTitle.setTextColor(Color.rgb(159, 230, 184));
+        computerTitle.setTextSize(13);
+        labels.addView(computerTitle);
+        labels.setMinimumHeight(dp(48));
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        labels.setContentDescription("切换电脑");
+        labels.setOnClickListener(view -> showComputers());
         serverCaption = new TextView(this);
         serverCaption.setTextColor(Color.LTGRAY);
         serverCaption.setTextSize(12);
@@ -133,15 +137,15 @@ public final class MainActivity extends Activity {
         card.addView(menu, new LinearLayout.LayoutParams(dp(72), dp(48)));
         menu.setOnClickListener(view -> {
             PopupMenu popup = new PopupMenu(this, menu);
-            String[] items = {"连接设置", "配对这台设备", "刷新主页", "打开 Tailscale", "关于"};
+            String[] items = {"电脑管理", "配对这台设备", "刷新主页", "打开 Tailscale", "关于"};
             for (int i = 0; i < items.length; i++) popup.getMenu().add(0, i, i, items[i]);
             popup.setOnMenuItemClickListener(item -> {
                 switch (item.getItemId()) {
-                    case 0: showConnection(); break;
+                    case 0: showComputers(); break;
                     case 1: showPairing(); break;
                     case 2: if (!server.isEmpty()) web.reload(); break;
                     case 3: openTailscale(); break;
-                    case 4: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.1")
+                    case 4: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.2")
                         .setMessage("基于开源 Collie 的非官方安卓客户端（MIT）。\n\n电脑继续运行 Collie 与 herdr，手机使用 Tailscale 连接。配对凭据保存在此 App 中。\n\n源码：github.com/DM-beginner/collie，android-apk 分支。\n\n此版本提供前台查看和操作；系统通知、麦克风录音尚未接入。")
                         .setNeutralButton("开源许可", (dialog, which) -> showLicense())
                         .setPositiveButton("知道了", null).show(); break;
@@ -165,9 +169,10 @@ public final class MainActivity extends Activity {
 
     private void updateHomeControls(String url) {
         if (homeControls == null) return;
+        computerTitle.setText(computers.active() == null ? "添加电脑  ▾" : computers.active().name + "  ▾");
         serverCaption.setText(server.isEmpty() ? getString(R.string.connection_unset)
                 : server.replaceFirst("^https?://", "").replaceFirst("/$", ""));
-        homeControls.setVisibility(server.isEmpty() || isHome(url) ? View.VISIBLE : View.GONE);
+        homeControls.setVisibility(server.isEmpty() || errorPanel != null || isHome(url) ? View.VISIBLE : View.GONE);
     }
 
     private void buildWebView() {
@@ -182,37 +187,43 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.2");
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (view != web) return true;
                 String destination = request.getUrl().toString();
                 if (ServerAddress.sameOrigin(server, destination)) return false;
                 if (request.isForMainFrame() && request.hasGesture()) openExternal(request.getUrl());
                 return true;
             }
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                if (view != web) return;
                 failedUrl = "";
                 progress.setVisibility(View.VISIBLE);
                 updateHomeControls(url);
                 clearError();
             }
             @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) {
+                if (view != web) return;
                 updateHomeControls(url); // Includes React Router's pushState/replaceState navigations.
             }
             @Override public void onPageFinished(WebView view, String url) {
+                if (view != web) return;
                 progress.setVisibility(View.GONE);
                 updateHomeControls(url);
                 CookieManager.getInstance().flush();
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (view != web) return;
                 if (request.isForMainFrame()) {
                     failedUrl = request.getUrl().toString();
                     showError("暂时连不上电脑", "请确认 Tailscale 已连接、电脑开机联网，并检查连接地址。再点重试。");
                 }
             }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                if (view != web) return;
                 if (request.isForMainFrame() && response.getStatusCode() >= 400) {
                     failedUrl = request.getUrl().toString();
                     showError("服务器返回错误", "HTTP " + response.getStatusCode() + "。请检查电脑上的 Collie 服务。");
@@ -220,9 +231,11 @@ public final class MainActivity extends Activity {
             }
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                 handler.cancel();
+                if (view != web) return;
                 showError("证书验证未通过", "请检查电脑时间和服务器 HTTPS 证书，或在 Tailscale 私网中使用原来的 HTTP 地址。");
             }
             @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                if (view != web) return true;
                 content.removeView(web);
                 web.destroy();
                 buildWebView();
@@ -231,10 +244,10 @@ public final class MainActivity extends Activity {
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
-            @Override public void onProgressChanged(WebView view, int value) { progress.setProgress(value); }
+            @Override public void onProgressChanged(WebView view, int value) { if (view == web) progress.setProgress(value); }
             @Override public void onPermissionRequest(PermissionRequest request) { request.deny(); }
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
-                if (!ServerAddress.sameOrigin(server, view.getUrl())) return false;
+                if (view != web || !ServerAddress.sameOrigin(server, view.getUrl())) return false;
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = callback;
                 Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE);
@@ -253,29 +266,79 @@ public final class MainActivity extends Activity {
     }
 
     private void showConnection() {
+        showComputerEditor(computers.active());
+    }
+
+    private void showComputers() {
+        java.util.List<ComputerProfiles.Computer> saved = computers.list();
+        if (saved.isEmpty()) { showComputerEditor(null); return; }
+        String[] rows = new String[saved.size()];
+        int checked = -1;
+        for (int i = 0; i < saved.size(); i++) {
+            ComputerProfiles.Computer computer = saved.get(i);
+            rows[i] = computer.name + "\n" + computer.address.replaceFirst("^https?://", "").replaceFirst("/$", "");
+            if (computers.active() != null && computer.id.equals(computers.active().id)) checked = i;
+        }
+        new AlertDialog.Builder(this).setTitle("我的电脑")
+                .setSingleChoiceItems(rows, checked, (dialog, which) -> {
+                    computers.select(saved.get(which).id);
+                    activateComputer();
+                    dialog.dismiss();
+                })
+                .setPositiveButton("添加电脑", (dialog, which) -> showComputerEditor(null))
+                .setNeutralButton("编辑当前电脑", (dialog, which) -> showComputerEditor(computers.active()))
+                .setNegativeButton("关闭", null).show();
+    }
+
+    private void activateComputer() {
+        if (fileCallback != null) { fileCallback.onReceiveValue(null); fileCallback = null; }
+        server = computers.active() == null ? "" : computers.active().address;
+        failedUrl = "";
+        clearError();
+        // Drop the previous page and its navigation history, retaining each origin's own storage.
+        WebView previous = web;
+        web = null;
+        previous.stopLoading(); content.removeView(previous); previous.destroy();
+        buildWebView();
+        updateHomeControls(server);
+        if (server.isEmpty()) showError("连接你的电脑", "添加 Windows 或 Mac 的 Collie 地址，再分别完成配对。");
+        else web.loadUrl(server);
+    }
+
+    private void showComputerEditor(ComputerProfiles.Computer computer) {
         LinearLayout fields = dialogFields();
         TextView info = new TextView(this);
-        info.setText("填写电脑上的 Collie 首页地址。外出使用时，请保持 Tailscale 已连接。");
+        info.setText("每台电脑需要运行 Collie。填写它的首页地址，外出时保持 Tailscale 已连接；每台电脑首次连接需单独配对。");
         fields.addView(info);
+        EditText name = new EditText(this);
+        name.setSingleLine(true);
+        name.setHint("电脑名称，例如 Windows 或 Mac");
+        name.setContentDescription("电脑名称");
+        if (computer != null) name.setText(computer.name);
+        fields.addView(name);
         EditText address = new EditText(this);
         address.setSingleLine(true);
         address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         address.setHint("http://电脑名.tailxxxx.ts.net:8787");
-        address.setText(server);
+        if (computer != null) address.setText(computer.address);
         address.setContentDescription("服务器地址");
         fields.addView(address);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("连接设置").setView(fields)
-                .setNegativeButton("取消", null).setPositiveButton("保存并连接", null).create();
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(computer == null ? "添加电脑" : "编辑电脑").setView(fields)
+                .setNegativeButton("取消", null).setPositiveButton("保存并连接", null);
+        if (computer != null) builder.setNeutralButton("移除电脑", (ignored, which) ->
+                new AlertDialog.Builder(this).setTitle("移除 " + computer.name + "？")
+                        .setMessage("仅从手机列表中移除，不会停止电脑服务，也不会撤销手机的配对授权。")
+                        .setNegativeButton("取消", null).setPositiveButton("移除", (confirmation, button) -> {
+                            computers.remove(computer.id); activateComputer();
+                        }).show());
+        AlertDialog dialog = builder.create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
             try {
-                String chosen = ServerAddress.normalize(address.getText().toString());
-                if (fileCallback != null) { fileCallback.onReceiveValue(null); fileCallback = null; }
-                boolean changed = !chosen.equals(server);
-                server = chosen;
-                preferences.edit().putString("server", server).apply();
-                if (changed) { web.stopLoading(); web.clearHistory(); }
-                clearError();
-                web.loadUrl(server);
+                if (name.getText().toString().trim().isEmpty() || name.getText().toString().trim().length() > 64) {
+                    name.setError("电脑名称需要 1 到 64 个字符"); return;
+                }
+                computers.put(computer == null ? null : computer.id, name.getText().toString(), address.getText().toString());
+                activateComputer();
                 dialog.dismiss();
             } catch (IllegalArgumentException error) { address.setError(error.getMessage()); }
         }));
@@ -313,6 +376,7 @@ public final class MainActivity extends Activity {
             if (!entered.matches("[A-Z0-9]{8}")) { code.setError("请输入 8 位配对码"); return; }
             if (name.isEmpty() || name.length() > 64) { label.setError("名称需要 1 到 64 个字符"); return; }
             String chosenServer = server;
+            WebView chosenWeb = web;
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
             message.setText("正在配对…");
             network.execute(() -> {
@@ -320,13 +384,14 @@ public final class MainActivity extends Activity {
                     String token = PairingClient.claim(chosenServer, entered, name);
                     runOnUiThread(() -> {
                         if (isFinishing() || isDestroyed()) return;
-                        if (!chosenServer.equals(server) || !ServerAddress.sameOrigin(server, web.getUrl())) {
+                        if (chosenWeb != web || !chosenServer.equals(server) || !ServerAddress.sameOrigin(server, web.getUrl())) {
                             message.setText("连接地址已切换，请重新生成配对码后重试");
                             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); return;
                         }
                         // Only the explicitly configured origin receives its own freshly minted token.
                         web.evaluateJavascript("(function(){try{localStorage.setItem('collie:device-token',"
                                 + JSONObject.quote(token) + ");return true;}catch(e){return false;}})()", result -> {
+                            if (chosenWeb != web || isFinishing() || isDestroyed()) return;
                             if (!"true".equals(result)) {
                                 message.setText("无法保存配对记录，请重启 App 后使用新配对码重试");
                                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); return;
@@ -387,9 +452,10 @@ public final class MainActivity extends Activity {
             panel.addView(retry);
         }
         Button settings = new Button(this); settings.setText("连接设置");
-        settings.setOnClickListener(view -> showConnection()); panel.addView(settings);
+        settings.setOnClickListener(view -> showComputers()); panel.addView(settings);
         errorPanel = panel;
         content.addView(panel, new FrameLayout.LayoutParams(-1, -1));
+        updateHomeControls(web.getUrl());
     }
     private void clearError() { if (errorPanel != null) { content.removeView(errorPanel); errorPanel = null; } }
     private void openTailscale() {

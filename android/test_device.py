@@ -24,13 +24,14 @@ classes, dex = work / "classes", work / "dex"
 classes.mkdir(); dex.mkdir()
 manifest = work / "AndroidManifest.xml"
 manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.dmbeginner.colliepocket.tests"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/><application android:label="Collie Pocket test"/><instrumentation android:name=".DeviceSmoke" android:targetPackage="dev.dmbeginner.colliepocket"/></manifest>''', encoding="utf-8")
-run([java / "bin/javac.exe", "--release", "8", "-encoding", "UTF-8", "-cp", platform,
+app_classes = max((ROOT / "build").glob("apk-*/classes.jar"), key=lambda path: path.stat().st_mtime)
+run([java / "bin/javac.exe", "--release", "8", "-encoding", "UTF-8", "-cp", str(platform) + os.pathsep + str(app_classes),
      "-d", classes, ROOT / "tests/DeviceSmoke.java"])
 jar = work / "classes.jar"
 with zipfile.ZipFile(jar, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for path in classes.rglob("*.class"):
         archive.write(path, path.relative_to(classes).as_posix())
-run([tools / "d8.bat", "--lib", platform, "--min-api", "26", "--output", dex, jar])
+run([tools / "d8.bat", "--lib", platform, "--classpath", app_classes, "--min-api", "26", "--output", dex, jar])
 unsigned = work / "test-unsigned.apk"
 run([tools / "aapt2.exe", "link", "-I", platform, "--manifest", manifest, "-o", unsigned])
 with zipfile.ZipFile(unsigned, "a") as archive:

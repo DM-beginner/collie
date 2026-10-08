@@ -3,6 +3,7 @@ package dev.dmbeginner.colliepocket.tests;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,6 +14,11 @@ import org.json.JSONTokener;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import dev.dmbeginner.colliepocket.ComputerProfiles;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 
 /** Opt-in test against an already paired emulator. Never targets a real pane. */
 public final class DeviceSmoke extends Instrumentation {
@@ -20,6 +26,7 @@ public final class DeviceSmoke extends Instrumentation {
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            testProfiles();
             Intent launch = new Intent().setClassName("dev.dmbeginner.colliepocket", "dev.dmbeginner.colliepocket.MainActivity")
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity activity = startActivitySync(launch);
@@ -81,12 +88,126 @@ public final class DeviceSmoke extends Instrumentation {
             runOnMainSync(() -> {
                 if (!settings.get().isShown()) throw new AssertionError("Back does not restore home settings");
             });
-            result.putString("result", "PASS: pairing survives update and restart; auth gate enforced; home settings visible; session uses full height; Back restores home settings.");
+            testSwitching(activity);
+            result.putString("result", "PASS: profile migration, validation and persistence; two origins keep separate storage; switching clears navigation; original pairing retained; auth gate enforced; session uses full height; Back restores home settings.");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
             result.putString("result", "FAIL: " + error.getClass().getSimpleName() + ": " + error.getMessage());
             finish(Activity.RESULT_CANCELED, result);
         }
+    }
+    private void testProfiles() {
+        SharedPreferences preferences = getTargetContext().getSharedPreferences("profiles-smoke", 0);
+        preferences.edit().clear().putString("server", "http://127.0.0.1:8787/").commit();
+        try {
+            ComputerProfiles profiles = new ComputerProfiles(preferences, "");
+            if (profiles.list().size() != 1 || !profiles.active().address.equals("http://127.0.0.1:8787/"))
+                throw new AssertionError("Previous connection did not migrate");
+            String original = profiles.active().id;
+            ComputerProfiles.Computer mac = profiles.put(null, "Mac", "http://mac.tail123.ts.net:8787");
+            profiles = new ComputerProfiles(preferences, "");
+            if (profiles.list().size() != 2 || !profiles.active().id.equals(mac.id))
+                throw new AssertionError("Profiles or active selection did not persist");
+            try { profiles.put(null, "Duplicate", mac.address); throw new AssertionError("Duplicate accepted"); }
+            catch (IllegalArgumentException expected) { }
+            try { profiles.put(null, " ", "http://localhost:8000"); throw new AssertionError("Empty name accepted"); }
+            catch (IllegalArgumentException expected) { }
+            try { profiles.put(null, "Unsafe", "http://example.com"); throw new AssertionError("Public HTTP accepted"); }
+            catch (IllegalArgumentException expected) { }
+            profiles.put(mac.id, "Mac Studio", mac.address);
+            profiles.select(original);
+            if (!new ComputerProfiles(preferences, "").active().id.equals(original))
+                throw new AssertionError("Selected computer did not persist");
+            profiles.remove(original);
+            if (!profiles.active().name.equals("Mac Studio")) throw new AssertionError("Removal fallback failed");
+            profiles.remove(mac.id);
+            if (new ComputerProfiles(preferences, "http://localhost:8787").active() != null)
+                throw new AssertionError("Deleted profile resurrected from default");
+            String defaults = "[{\"name\":\"MacBook Pro\",\"address\":\"https://mac.tail123.ts.net/\"}]";
+            profiles = new ComputerProfiles(preferences, "", defaults);
+            if (!profiles.active().name.equals("MacBook Pro")) throw new AssertionError("Named build defaults missing");
+            profiles.remove(profiles.active().id);
+            if (new ComputerProfiles(preferences, "", defaults).active() != null)
+                throw new AssertionError("Removed build default resurrected");
+        } finally { preferences.edit().clear().commit(); }
+    }
+    private void testSwitching(Activity activity) throws Exception {
+        java.lang.reflect.Field field = activity.getClass().getDeclaredField("computers");
+        field.setAccessible(true);
+        ComputerProfiles profiles = (ComputerProfiles) field.get(activity);
+        String original = profiles.active().id;
+        java.lang.reflect.Method activate = activity.getClass().getDeclaredMethod("activateComputer");
+        activate.setAccessible(true);
+        AtomicReference<String> firstId = new AtomicReference<>(), secondId = new AtomicReference<>();
+        try (Fixture first = new Fixture(); Fixture second = new Fixture()) {
+            runOnMainSync(() -> {
+                firstId.set(profiles.put(null, "Test Windows", first.address()).id);
+                secondId.set(profiles.put(null, "Test Mac", second.address()).id);
+                profiles.select(firstId.get());
+                invoke(activate, activity);
+            });
+            WebView a = currentWeb(activity);
+            waitFor(a, "document.title==='Profile fixture'");
+            evaluate(a, "localStorage.setItem('collie:pocket-profile-smoke','Windows');true");
+            runOnMainSync(() -> {
+                profiles.select(secondId.get()); invoke(activate, activity);
+            });
+            WebView b = currentWeb(activity);
+            waitFor(b, "document.title==='Profile fixture'");
+            if (!"true".equals(evaluate(b, "localStorage.getItem('collie:pocket-profile-smoke')===null && localStorage.getItem('collie:device-token')===null")))
+                throw new AssertionError("Storage crossed computer origins");
+            evaluate(b, "localStorage.setItem('collie:pocket-profile-smoke','Mac');true");
+            runOnMainSync(() -> {
+                if (b.canGoBack()) throw new AssertionError("Previous computer remains in Back history");
+                profiles.select(firstId.get()); invoke(activate, activity);
+            });
+            WebView again = currentWeb(activity);
+            waitFor(again, "document.title==='Profile fixture'");
+            if (!"true".equals(evaluate(again, "localStorage.getItem('collie:pocket-profile-smoke')==='Windows'")))
+                throw new AssertionError("Original computer storage lost on switch");
+            evaluate(again, "localStorage.removeItem('collie:pocket-profile-smoke');true");
+        } finally {
+            runOnMainSync(() -> {
+                if (firstId.get() != null) profiles.remove(firstId.get());
+                if (secondId.get() != null) profiles.remove(secondId.get());
+                profiles.select(original); invoke(activate, activity);
+            });
+        }
+        WebView returned = currentWeb(activity);
+        waitFor(returned, "location.protocol.indexOf('http')===0 && document.readyState==='complete'");
+        if (!"true".equals(evaluate(returned, "!!localStorage.getItem('collie:device-token')")))
+            throw new AssertionError("Existing pairing lost when returning to original computer");
+    }
+    private void invoke(java.lang.reflect.Method method, Activity activity) {
+        try { method.invoke(activity); }
+        catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+    }
+    private WebView currentWeb(Activity activity) {
+        AtomicReference<WebView> value = new AtomicReference<>();
+        runOnMainSync(() -> value.set(findWeb(activity.getWindow().getDecorView())));
+        return value.get();
+    }
+    private static final class Fixture implements AutoCloseable {
+        final ServerSocket server;
+        Fixture() throws Exception {
+            server = new ServerSocket(0, 10, InetAddress.getByName("127.0.0.1"));
+            Thread responder = new Thread(() -> {
+                while (!server.isClosed()) {
+                    try (Socket socket = server.accept()) {
+                        socket.setSoTimeout(2000);
+                        java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+                        String line;
+                        while ((line = reader.readLine()) != null && !line.isEmpty()) { }
+                        byte[] body = "<!doctype html><title>Profile fixture</title><p>Computer connection test</p>".getBytes(StandardCharsets.UTF_8);
+                        socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: " + body.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                        socket.getOutputStream().write(body);
+                    } catch (java.io.IOException ignored) { /* Socket closes at the end of the test. */ }
+                }
+            }, "Collie-profile-fixture");
+            responder.setDaemon(true); responder.start();
+        }
+        String address() { return "http://127.0.0.1:" + server.getLocalPort() + "/"; }
+        @Override public void close() throws java.io.IOException { server.close(); }
     }
     private String evaluate(WebView web, String javascript) throws Exception {
         CountDownLatch done = new CountDownLatch(1);

@@ -2,11 +2,11 @@
 
 这是基于 [AltanS/collie](https://github.com/AltanS/collie) 的非官方 Android 客户端，保留原项目 MIT 许可。电脑继续运行 Collie 和 herdr；手机安装此 APK，通过 Tailscale 连接电脑。
 
-采用 Android WebView 承载 Collie 原有界面，并增加原生连接设置、配对、文件选择和返回键处理。没有浏览器地址栏或常驻 App 顶部栏；连接地址与设置入口集中在主页下方的「电脑连接」卡片，进入会话、文件或网页设置后自动隐藏。页面功能和布局仍来自电脑提供的 Collie。此版没有后台推送、麦克风录音或后台连接保活，电脑断网、休眠或关闭服务后不能远程操作。
+采用 Android WebView 承载 Collie 原有界面，并增加原生多电脑配置、配对、文件选择和返回键处理。没有浏览器地址栏或常驻 App 顶部栏；电脑切换与设置入口集中在主页下方的连接卡片，进入会话、文件或网页设置后自动隐藏。页面功能和布局仍来自电脑提供的 Collie。此版没有后台推送、麦克风录音或后台连接保活，电脑断网、休眠或关闭服务后不能远程操作。
 
 ## 先在电脑看效果
 
-已经配置好环境的电脑，双击本目录的 **Start-Preview.cmd**。它会打开 `Collie_Preview` 虚拟手机，把 `build/collie-pocket-0.1.1.apk` 安装进去并启动。首次开机可能需要几分钟。关闭虚拟手机窗口不影响电脑上的 herdr。
+已经配置好环境的电脑，双击本目录的 **Start-Preview.cmd**。它会打开 `Collie_Preview` 虚拟手机，把 `build/collie-pocket-0.1.2.apk` 安装进去并启动。首次开机可能需要几分钟。关闭虚拟手机窗口不影响电脑上的 herdr。
 
 新电脑需要先安装 Android SDK、Android Emulator 和 `system-images;android-35;google_apis;x86_64`，在 Device Manager 创建名为 `Collie_Preview` 的 Android 15 虚拟设备，并设置 `ANDROID_HOME`。启动脚本使用电脑的 Tailscale DNS；电脑应先登录 Tailscale。
 
@@ -14,11 +14,22 @@
 
 1. 保持手机 Tailscale 已连接，与电脑使用同一账号或已授权的同一 tailnet。
 2. 将构建出的 APK 传到手机并点击安装。如果系统询问，允许下载 APK 的应用安装此文件。
-3. 打开 **Collie Pocket**。点主页下方「电脑连接」卡片的 `设置 → 连接设置`，填电脑现有的 Collie 首页地址，包括 `http://` 和端口；个人构建可以预填地址。
+3. 打开 **Collie Pocket**。点主页下方连接卡片的电脑名，选择「添加电脑」，填写名称与 Collie 首页地址，包括 `http://` 和端口；个人构建可以预填地址。
 4. 在电脑双击本目录的 **Pair-Phone.cmd**（或运行 `collie pair`），得到一个有时限、只能用一次的 8 位配对码。
 5. 在 App 主页下方点 `设置 → 配对这台设备`，输入配对码，为设备取个名字，例如 `my-phone-app`。配对成功后可以操作。
 
-App 与 Chrome 的配对记录独立。直接安装 0.1.1 覆盖 0.1.0，无需先卸载，配对和终端/聊天视图设置会保留。重启 App 和覆盖安装同签名的新 APK 会保留记录；清除 App 数据、卸载后重装或更换服务器地址需要重新配对。失去手机时，在电脑用 `collie devices` 查看帮助并撤销对应设备。
+App 与 Chrome 的配对记录独立。直接安装 0.1.2 覆盖旧版，无需先卸载；现有连接会自动转为「我的电脑」，配对和终端/聊天视图设置保留。每台电脑首次连接需单独配对，切换回已配对的原地址无需再次配对。清除 App 数据、卸载后重装或改用另一地址需要重新配对。失去手机时，在各台电脑用 `collie devices` 查看帮助并撤销对应设备。
+
+## 添加 Windows 与 Mac
+
+1. 在两台电脑上分别运行 Collie 与 herdr，并让手机和电脑加入同一 Tailscale 网络。
+2. 在主页下方点电脑名 →「添加电脑」，分别保存 Windows 和 Mac 的名称与地址。
+3. 切换到新电脑后，点「设置 → 配对这台设备」，使用那台电脑生成的一次性配对码。
+4. 以后点主页下方的电脑名即可切换；「编辑当前电脑」可以重命名、修改地址或移除。
+
+连接失败时仍可打开电脑列表，切换回在线的电脑。切换会关闭旧页面及其返回历史，每个服务器来源的配对和视图设置分别保留；删除列表条目不会停止电脑服务或撤销配对授权。同一服务器来源不能重复添加。
+
+Space 是 herdr 的工作区。单独创建 Space 不会连接另一台电脑；要在同一 Collie 主页汇总多台电脑的 Space，可另行配置上游的 [Crew 模式](../docs/crew.md)。APK 的电脑列表直接切换各自的 Collie 服务，不需要 Crew。
 
 查看会话时没有额外 App 栏。用会话自己的返回按钮或安卓返回手势回到主页，就能修改连接、重新配对、刷新主页、打开 Tailscale 或查看开源许可。加载失败时，错误页仍有重试和连接设置按钮。
 
@@ -43,6 +54,9 @@ App 与 Chrome 的配对记录独立。直接安装 0.1.1 覆盖 0.1.0，无需�
 
 # 构建个人版，仅在本机 APK 内预填自己的地址，不改公开源码
 .\Build-Android.ps1 -Server 'http://your-computer.your-tailnet.ts.net:8787/'
+
+# 个人构建预填多台电脑；地址和名称仅进入生成的 APK
+.\Build-Android.ps1 -Server 'http://windows.your-tailnet.ts.net:8787/' -Computer @('Windows=http://windows.your-tailnet.ts.net:8787/', 'Mac=https://mac.your-tailnet.ts.net/')
 
 # 运行地址验证测试
 .\Test-Address.ps1
@@ -73,7 +87,7 @@ Android Studio 的默认 debug 签名与 `Build-Android.ps1` 的个人签名不�
 python test_device.py --serial emulator-5554
 ```
 
-测试会构建一个单独的 instrumentation 测试 APK，重启主 App 并检查配对凭据是否保留、未配对的写请求是否被拒绝，以及已配对请求是否通过鉴权；还会打开一个会话，检查主页设置卡片隐藏、顶部没有预留 App 栏，并验证返回主页后设置入口恢复。所有写请求仅指向明确不存在的测试 pane，不向实际 agent 发送输入。测试 APK 不包含在交付的主 APK 中，也不读取或打印配对令牌。
+测试会构建一个单独的 instrumentation 测试 APK，重启主 App 并检查配对凭据是否保留、未配对的写请求是否被拒绝，以及已配对请求是否通过鉴权；还会打开一个会话，检查主页设置卡片隐藏、顶部没有预留 App 栏，并验证返回主页后设置入口恢复。多电脑测试检查迁移、增删改、重复地址验证和选择持久化，再通过模拟器内部两个临时 HTTP 来源验证 WebView 存储隔离、切换后清除返回历史、回到原电脑仍有配对。所有写请求仅指向明确不存在的测试 pane，不向实际 agent 发送输入。测试 APK 不包含在交付的主 APK 中，也不导出或打印配对令牌。
 
 ## 安全边界
 

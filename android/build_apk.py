@@ -4,6 +4,7 @@ The signing key stays outside the repository. Its random password is protected b
 Windows DPAPI for the current Windows user. Never send the key to another person.
 """
 import argparse
+import json
 import ctypes
 from ctypes import wintypes
 import hashlib
@@ -17,8 +18,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.1.1"
-VERSION_CODE = 2
+VERSION = "0.1.2"
+VERSION_CODE = 3
 
 
 def run(args, env=None):
@@ -90,6 +91,7 @@ def main():
     parser.add_argument("--sdk", type=Path, default=os.environ.get("ANDROID_HOME"))
     parser.add_argument("--java", type=Path, default=os.environ.get("JAVA_HOME"))
     parser.add_argument("--default-server", default="", help="Personal build only; never committed to source")
+    parser.add_argument("--computer", action="append", default=[], metavar="NAME=URL", help="Pre-fill a named computer in a personal build; repeatable")
     options = parser.parse_args()
     if not options.sdk or not options.java:
         parser.error("Set ANDROID_HOME and JAVA_HOME, or use Build-Android.ps1 on the configured computer.")
@@ -109,17 +111,27 @@ def main():
     generated, classes, dex = [work / name for name in ("generated", "classes", "dex")]
     for folder in (generated, classes, dex):
         folder.mkdir()
-    if options.default_server:
+    if options.default_server or options.computer:
         test_classes = work / "validator"
         test_classes.mkdir()
         source = ROOT / "app/src/main/java/dev/dmbeginner/colliepocket/ServerAddress.java"
         check = test_classes / "Check.java"
         check.write_text("class Check { public static void main(String[] a) { System.out.print(dev.dmbeginner.colliepocket.ServerAddress.normalize(a[0])); } }", encoding="utf-8")
         run([java / "bin/javac.exe", "-encoding", "UTF-8", "-d", test_classes, source, check])
-        normalized = subprocess.check_output([str(java / "bin/java.exe"), "-cp", str(test_classes), "Check", options.default_server], text=True)
+        def normalize(value):
+            return subprocess.check_output([str(java / "bin/java.exe"), "-cp", str(test_classes), "Check", value], text=True)
         strings = res / "values/strings.xml"
         tree = ET.parse(strings)
-        tree.find(".//string[@name='default_server']").text = normalized
+        if options.default_server:
+            tree.find(".//string[@name='default_server']").text = normalize(options.default_server)
+        computers = []
+        for entry in options.computer:
+            name, separator, address = entry.partition("=")
+            if not separator or not name.strip() or len(name.strip()) > 64:
+                parser.error("--computer expects NAME=URL with a name of 1 to 64 characters")
+            computers.append({"name": name.strip(), "address": normalize(address)})
+        # Android string resources interpret quote and backslash escapes before JSON parsing.
+        tree.find(".//string[@name='default_computers']").text = json.dumps(computers, ensure_ascii=False).replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
         tree.write(strings, encoding="utf-8", xml_declaration=True)
     compiled = work / "resources.zip"
     resources = work / "resources.apk"

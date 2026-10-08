@@ -6,4 +6,5 @@
     <string name="connection_unset">尚未设置服务器地址</string>
     <string name="app_name">Collie Pocket</string>
     <string name="default_server" translatable="false"></string>
+    <string name="default_computers" translatable="false">[]</string>
 </resources>
