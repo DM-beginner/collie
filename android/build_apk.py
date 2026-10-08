@@ -17,7 +17,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.1.0"
+VERSION = "0.1.1"
+VERSION_CODE = 2
 
 
 def run(args, env=None):
@@ -131,7 +132,7 @@ def main():
     run([tools / "aapt2.exe", "link", "-o", resources, "-I", platform,
          "-A", ROOT / "app/src/main/assets",
          "--manifest", manifest, "--java", generated,
-         "--min-sdk-version", "26", "--target-sdk-version", "35", "--version-code", "1",
+         "--min-sdk-version", "26", "--target-sdk-version", "35", "--version-code", str(VERSION_CODE),
          "--version-name", VERSION, compiled])
     sources = list((ROOT / "app/src/main/java").rglob("*.java")) + list(generated.rglob("*.java"))
     args_file = work / "sources.txt"

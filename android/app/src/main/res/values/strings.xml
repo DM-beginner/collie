@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="connection_title">电脑连接</string>
+    <string name="connection_settings">设置</string>
+    <string name="app_settings">App 设置</string>
+    <string name="connection_unset">尚未设置服务器地址</string>
     <string name="app_name">Collie Pocket</string>
     <string name="default_server" translatable="false"></string>
 </resources>

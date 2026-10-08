@@ -53,6 +53,8 @@ public final class MainActivity extends Activity {
     private FrameLayout content;
     private ProgressBar progress;
     private WebView web;
+    private View homeControls;
+    private TextView serverCaption;
     private View errorPanel;
     private ValueCallback<Uri[]> fileCallback;
     private String server = "";
@@ -81,49 +83,65 @@ public final class MainActivity extends Activity {
                 return WindowInsets.CONSUMED;
             });
         } else { root.setFitsSystemWindows(true); }
-        buildToolbar();
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
-        root.addView(progress, new LinearLayout.LayoutParams(-1, dp(2)));
+        progress.setVisibility(View.GONE);
         content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
         buildWebView();
+        content.addView(progress, new FrameLayout.LayoutParams(-1, dp(2), Gravity.TOP));
+        buildHomeControls();
         String saved = preferences.getString("server", getString(R.string.default_server));
         try { if (saved != null && !saved.isEmpty()) server = ServerAddress.normalize(saved); }
         catch (IllegalArgumentException ignored) { server = ""; }
         if (server.isEmpty()) showError("连接你的电脑", "填写电脑上的 Collie 地址，然后配对这台设备。");
         else if (state == null || web.restoreState(state) == null
                 || !ServerAddress.sameOrigin(server, web.getUrl())) web.loadUrl(server);
+        updateHomeControls(web.getUrl());
     }
 
-    private void buildToolbar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(12), 0, dp(4), 0);
+    private void buildHomeControls() {
+        LinearLayout section = new LinearLayout(this);
+        section.setPadding(dp(12), dp(8), dp(12), dp(8));
+        LinearLayout card = new LinearLayout(this);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(12), dp(6), dp(4), dp(6));
+        android.graphics.drawable.GradientDrawable surface = new android.graphics.drawable.GradientDrawable();
+        surface.setColor(Color.rgb(24, 35, 32));
+        surface.setCornerRadius(dp(8));
+        surface.setStroke(dp(1), Color.rgb(55, 72, 64));
+        card.setBackground(surface);
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
         TextView title = new TextView(this);
-        title.setText("Collie Pocket");
+        title.setText(R.string.connection_title);
         title.setTextColor(Color.rgb(159, 230, 184));
-        title.setTextSize(15);
-        bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setTextSize(13);
+        labels.addView(title);
+        serverCaption = new TextView(this);
+        serverCaption.setTextColor(Color.LTGRAY);
+        serverCaption.setTextSize(12);
+        serverCaption.setSingleLine(true);
+        serverCaption.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        labels.addView(serverCaption);
+        card.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         Button menu = new Button(this, null, android.R.attr.borderlessButtonStyle);
-        menu.setText("⋮");
-        menu.setTextSize(24);
+        menu.setText(R.string.connection_settings);
+        menu.setTextSize(14);
         menu.setTextColor(Color.WHITE);
-        menu.setContentDescription("应用菜单");
-        bar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        menu.setContentDescription(getString(R.string.app_settings));
+        card.addView(menu, new LinearLayout.LayoutParams(dp(72), dp(48)));
         menu.setOnClickListener(view -> {
             PopupMenu popup = new PopupMenu(this, menu);
-            String[] items = {"首页", "刷新", "配对这台设备", "连接设置", "打开 Tailscale", "关于"};
+            String[] items = {"连接设置", "配对这台设备", "刷新主页", "打开 Tailscale", "关于"};
             for (int i = 0; i < items.length; i++) popup.getMenu().add(0, i, i, items[i]);
             popup.setOnMenuItemClickListener(item -> {
                 switch (item.getItemId()) {
-                    case 0: if (!server.isEmpty()) web.loadUrl(server); else showConnection(); break;
-                    case 1: if (!server.isEmpty()) web.reload(); break;
-                    case 2: showPairing(); break;
-                    case 3: showConnection(); break;
-                    case 4: openTailscale(); break;
-                    case 5: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.0")
+                    case 0: showConnection(); break;
+                    case 1: showPairing(); break;
+                    case 2: if (!server.isEmpty()) web.reload(); break;
+                    case 3: openTailscale(); break;
+                    case 4: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.1")
                         .setMessage("基于开源 Collie 的非官方安卓客户端（MIT）。\n\n电脑继续运行 Collie 与 herdr，手机使用 Tailscale 连接。配对凭据保存在此 App 中。\n\n源码：github.com/DM-beginner/collie，android-apk 分支。\n\n此版本提供前台查看和操作；系统通知、麦克风录音尚未接入。")
                         .setNeutralButton("开源许可", (dialog, which) -> showLicense())
                         .setPositiveButton("知道了", null).show(); break;
@@ -133,7 +151,23 @@ public final class MainActivity extends Activity {
             });
             popup.show();
         });
-        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(48)));
+        section.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        homeControls = section;
+        homeControls.setVisibility(View.GONE);
+        root.addView(homeControls, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private boolean isHome(String url) {
+        if (!ServerAddress.sameOrigin(server, url)) return false;
+        String path = Uri.parse(url).getPath();
+        return path == null || path.isEmpty() || "/".equals(path);
+    }
+
+    private void updateHomeControls(String url) {
+        if (homeControls == null) return;
+        serverCaption.setText(server.isEmpty() ? getString(R.string.connection_unset)
+                : server.replaceFirst("^https?://", "").replaceFirst("/$", ""));
+        homeControls.setVisibility(server.isEmpty() || isHome(url) ? View.VISIBLE : View.GONE);
     }
 
     private void buildWebView() {
@@ -148,7 +182,7 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.0");
+        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.1");
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         web.setWebViewClient(new WebViewClient() {
@@ -161,10 +195,15 @@ public final class MainActivity extends Activity {
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
                 failedUrl = "";
                 progress.setVisibility(View.VISIBLE);
+                updateHomeControls(url);
                 clearError();
             }
+            @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) {
+                updateHomeControls(url); // Includes React Router's pushState/replaceState navigations.
+            }
             @Override public void onPageFinished(WebView view, String url) {
-                progress.setVisibility(View.INVISIBLE);
+                progress.setVisibility(View.GONE);
+                updateHomeControls(url);
                 CookieManager.getInstance().flush();
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
@@ -331,7 +370,7 @@ public final class MainActivity extends Activity {
     }
     private void showError(String title, String description) {
         clearError();
-        progress.setVisibility(View.INVISIBLE);
+        progress.setVisibility(View.GONE);
         LinearLayout panel = dialogFields();
         panel.setGravity(Gravity.CENTER);
         panel.setBackgroundColor(BACKGROUND);
@@ -376,7 +415,12 @@ public final class MainActivity extends Activity {
         }
         fileCallback.onReceiveValue(selected.isEmpty() ? null : selected.toArray(new Uri[0])); fileCallback = null;
     }
-    private void navigateBack() { if (errorPanel == null && web.canGoBack()) web.goBack(); else moveTaskToBack(true); }
+    private void navigateBack() {
+        if (isHome(web.getUrl())) { moveTaskToBack(true); return; }
+        if (errorPanel == null && web.canGoBack()) web.goBack();
+        else if (!server.isEmpty() && ServerAddress.sameOrigin(server, web.getUrl())) web.loadUrl(server);
+        else moveTaskToBack(true);
+    }
     @Override public void onBackPressed() { navigateBack(); }
     @Override protected void onPause() { web.onPause(); web.pauseTimers(); CookieManager.getInstance().flush(); super.onPause(); }
     @Override protected void onResume() { super.onResume(); if (web != null) { web.onResume(); web.resumeTimers(); } }
