@@ -229,6 +229,10 @@ Running a crew? Update the lead first; members follow on their own. Details:
   longer found the box, so the command stayed typed and never sent. The palette now counts as the
   box's footer, and the command is read back and then submitted. Thanks @thelinuxlich (#373).
 
+### Packaging
+
+- **An Android client opens Collie in its own app.** The optional `android/` project adds a WebView client with native connection settings, device pairing, file selection, a signed APK builder and a virtual-device preview launcher. The existing bridge and web UI stay independently deployed.
+
 ## [1.17.2] - 2026-10-06
 
 ### Fixed
