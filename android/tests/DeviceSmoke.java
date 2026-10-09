@@ -90,7 +90,7 @@ public final class DeviceSmoke extends Instrumentation {
             });
             waitFor(web, "location.pathname==='/'");
             testSwitching(activity);
-            result.putString("result", "PASS: Settings gear exposes computer controls; native entry requires a user tap; original settings preserved; home footer removed; profile persistence and origin isolation; original pairing retained; auth gate enforced; session uses full height.");
+            result.putString("result", "PASS: Settings gear exposes computer controls; native entry requires a user tap; original settings and persistent Tailscale toggle preserved; home footer removed; profile persistence and origin isolation; original pairing retained; auth gate enforced; session uses full height.");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
             result.putString("result", "FAIL: " + error.getClass().getSimpleName() + ": " + error.getMessage());
@@ -111,6 +111,7 @@ public final class DeviceSmoke extends Instrumentation {
         if (accessibleText("切换 / 管理电脑") != null) throw new AssertionError("Scripted navigation opened native controls without a user gesture");
         tapWeb(web, entry);
         waitForText("切换 / 管理电脑");
+        testTailscaleSetting(activity, web, entry);
         tapText("切换 / 管理电脑");
         waitForText("我的电脑");
         sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
@@ -123,6 +124,32 @@ public final class DeviceSmoke extends Instrumentation {
             ViewGroup root = (ViewGroup)((ViewGroup)activity.findViewById(android.R.id.content)).getChildAt(0);
             if (root.getChildCount() != 1) throw new AssertionError("Extra native home UI consumes page height");
         });
+    }
+    private void testTailscaleSetting(Activity activity, WebView web, String entry) throws Exception {
+        SharedPreferences prefs = getTargetContext().getSharedPreferences("connection", 0);
+        boolean existed = prefs.contains("auto_tailscale"), original = prefs.getBoolean("auto_tailscale", true);
+        try {
+            tapText("Tailscale 自动连接");
+            waitForText("打开 App 时自动连接 Tailscale");
+            AccessibilityNodeInfo toggle = accessibleText("打开 App 时自动连接 Tailscale");
+            if (toggle == null || !toggle.isCheckable() || toggle.isChecked() != original)
+                throw new AssertionError("Automatic connection setting differs from saved preference");
+            tapText("打开 App 时自动连接 Tailscale");
+            if (prefs.getBoolean("auto_tailscale", original) == original) throw new AssertionError("Automatic connection toggle not saved");
+            tapText("关闭");
+            tapWeb(web, entry); waitForText("Tailscale 自动连接"); tapText("Tailscale 自动连接");
+            waitForText("打开 App 时自动连接 Tailscale");
+            toggle = accessibleText("打开 App 时自动连接 Tailscale");
+            if (toggle == null || !toggle.isCheckable() || toggle.isChecked() == original)
+                throw new AssertionError("Automatic connection setting lost on reopening");
+            tapText("打开 App 时自动连接 Tailscale");
+            tapText("关闭");
+            tapWeb(web, entry); waitForText("切换 / 管理电脑");
+        } finally {
+            SharedPreferences.Editor edit = prefs.edit();
+            if (existed) edit.putBoolean("auto_tailscale", original); else edit.remove("auto_tailscale");
+            edit.commit();
+        }
     }
     private void tapWeb(WebView web, String element) throws Exception {
         String value = evaluate(web, "(function(){var e=" + element + ";e.scrollIntoView({block:'center'});var r=e.getBoundingClientRect();return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,scale:devicePixelRatio});})()");
@@ -290,7 +317,7 @@ public final class DeviceSmoke extends Instrumentation {
     private void waitFor(WebView web, String condition) throws Exception {
         long deadline = System.currentTimeMillis() + 15000;
         while (!"true".equals(evaluate(web, condition))) {
-            if (System.currentTimeMillis() > deadline) throw new AssertionError("Navigation timed out");
+            if (System.currentTimeMillis() > deadline) throw new AssertionError("Navigation timed out: " + condition);
             Thread.sleep(100);
         }
         waitForIdleSync();

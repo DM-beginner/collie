@@ -28,6 +28,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.Switch;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -57,6 +58,9 @@ public final class MainActivity extends Activity {
     private String server = "";
     private String failedUrl = "";
     private String settingsScript;
+    private TailscaleConnector tailscale;
+    private boolean foreground;
+    private boolean connectingTailscale;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -65,6 +69,7 @@ public final class MainActivity extends Activity {
                     android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::navigateBack);
         }
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
+        tailscale = new TailscaleConnector(this);
         computers = new ComputerProfiles(preferences, getString(R.string.default_server), getString(R.string.default_computers));
         server = computers.active() == null ? "" : computers.active().address;
         settingsScript = readAsset("pocket-settings.js");
@@ -100,14 +105,15 @@ public final class MainActivity extends Activity {
 
     private void showAppSettings() {
         String name = computers.active() == null ? "尚未添加电脑" : computers.active().name;
-        String[] items = {"切换 / 管理电脑", "配对这台设备", "刷新主页", "打开 Tailscale", "关于"};
+        String[] items = {"切换 / 管理电脑", "配对这台设备", "刷新主页", "打开 Tailscale", "Tailscale 自动连接", "关于"};
         new AlertDialog.Builder(this).setTitle("电脑连接 · " + name).setItems(items, (dialog, which) -> {
             switch (which) {
                 case 0: showComputers(); break;
                 case 1: showPairing(); break;
                 case 2: if (!server.isEmpty()) { clearError(); web.loadUrl(server); } break;
                 case 3: openTailscale(); break;
-                case 4: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.3")
+                case 4: showTailscaleSettings(); break;
+                case 5: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.4")
                     .setMessage("基于开源 Collie 的非官方安卓客户端（MIT）。\n\n电脑继续运行 Collie 与 herdr，手机使用 Tailscale 连接。各台电脑的配对凭据分别保存在此 App 中。\n\n源码：github.com/DM-beginner/collie，android-apk 分支。\n\n此版本提供前台查看和操作；系统通知、麦克风录音尚未接入。")
                     .setNeutralButton("开源许可", (about, button) -> showLicense())
                     .setPositiveButton("知道了", null).show(); break;
@@ -153,7 +159,7 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.3");
+        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.4");
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         web.setWebViewClient(new WebViewClient() {
@@ -178,7 +184,7 @@ public final class MainActivity extends Activity {
                 failedUrl = "";
                 progress.setVisibility(View.VISIBLE);
 
-                clearError();
+                if (!connectingTailscale) clearError();
             }
             @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) {
                 if (view != web) return;
@@ -195,7 +201,7 @@ public final class MainActivity extends Activity {
                 if (view != web) return;
                 if (request.isForMainFrame()) {
                     failedUrl = request.getUrl().toString();
-                    showError("暂时连不上电脑", "请确认 Tailscale 已连接、电脑开机联网，并检查连接地址。再点重试。");
+                    if (!connectingTailscale) showError("暂时连不上电脑", "请确认 Tailscale 已连接、电脑开机联网，并检查连接地址。再点重试。");
                 }
             }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
@@ -267,6 +273,8 @@ public final class MainActivity extends Activity {
     }
 
     private void activateComputer() {
+        tailscale.stop();
+        connectingTailscale = false;
         if (fileCallback != null) { fileCallback.onReceiveValue(null); fileCallback = null; }
         server = computers.active() == null ? "" : computers.active().address;
         failedUrl = "";
@@ -279,6 +287,7 @@ public final class MainActivity extends Activity {
 
         if (server.isEmpty()) showError("连接你的电脑", "添加 Windows 或 Mac 的 Collie 地址，再分别完成配对。");
         else web.loadUrl(server);
+        autoConnectTailscale();
     }
 
     private void showComputerEditor(ComputerProfiles.Computer computer) {
@@ -422,6 +431,7 @@ public final class MainActivity extends Activity {
         if (!server.isEmpty()) {
             Button retry = new Button(this); retry.setText("重试");
             retry.setOnClickListener(view -> {
+                autoConnectTailscale();
                 clearError();
                 web.loadUrl(ServerAddress.sameOrigin(server, failedUrl) ? failedUrl : server);
             });
@@ -429,14 +439,75 @@ public final class MainActivity extends Activity {
         }
         Button settings = new Button(this); settings.setText("连接设置");
         settings.setOnClickListener(view -> showComputers()); panel.addView(settings);
+        if (TailscaleConnector.isTailscaleAddress(server)) {
+            Button vpn = new Button(this); vpn.setText("Tailscale 设置");
+            vpn.setOnClickListener(view -> showTailscaleSettings()); panel.addView(vpn);
+        }
         errorPanel = panel;
         content.addView(panel, new FrameLayout.LayoutParams(-1, -1));
 
     }
     private void clearError() { if (errorPanel != null) { content.removeView(errorPanel); errorPanel = null; } }
+    private void autoConnectTailscale() {
+        if (foreground && !tailscale.isRunning() && preferences.getBoolean("auto_tailscale", true)
+                && TailscaleConnector.isTailscaleAddress(server)) connectTailscale();
+    }
+    private void connectTailscale() {
+        if (!foreground || server.isEmpty()) return;
+        tailscale.start(server, new TailscaleConnector.Listener() {
+            @Override public void onConnecting() {
+                connectingTailscale = true;
+                showError("正在连接 Tailscale…", "正在等待电脑上线，连接后会自动继续。首次连接或切换过其他 VPN 时，可能需要在 Tailscale 中确认授权。");
+            }
+            @Override public void onReady(boolean reconnected) {
+                connectingTailscale = false;
+                if (reconnected || errorPanel != null || !failedUrl.isEmpty()) {
+                    String target = ServerAddress.sameOrigin(server, failedUrl) ? failedUrl
+                            : ServerAddress.sameOrigin(server, web.getUrl()) ? web.getUrl() : server;
+                    clearError(); web.loadUrl(target);
+                }
+            }
+            @Override public void onUnavailable(String reason) {
+                boolean waiting = connectingTailscale;
+                connectingTailscale = false;
+                if (waiting || errorPanel != null || !failedUrl.isEmpty()) showError("暂时连不上电脑", reason);
+                else Toast.makeText(MainActivity.this, reason, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+    private void showTailscaleSettings() {
+        LinearLayout fields = dialogFields();
+        Switch automatic = new Switch(this);
+        automatic.setText("打开 App 时自动连接 Tailscale");
+        automatic.setChecked(preferences.getBoolean("auto_tailscale", true));
+        fields.addView(automatic);
+        TextView info = new TextView(this);
+        info.setText("使用 Tailscale 地址且电脑暂时不可访问时，App 会尝试连接并自动重试。请先安装、登录 Tailscale 并允许 VPN 连接；系统要求重新授权时需要手动确认。切换过其他 VPN 时，可能需要先打开 Tailscale。此设置仅保存在当前手机。退出 App 后保持你的 VPN 状态。");
+        info.setPadding(0, dp(12), 0, 0); fields.addView(info);
+        automatic.setOnCheckedChangeListener((button, enabled) -> {
+            preferences.edit().putBoolean("auto_tailscale", enabled).apply();
+            tailscale.stop();
+            if (connectingTailscale) {
+                connectingTailscale = false;
+                showError("暂时连不上电脑", "自动连接已关闭，可以手动连接 Tailscale 后重试。");
+            }
+            if (enabled) autoConnectTailscale();
+        });
+        new AlertDialog.Builder(this).setTitle("Tailscale 连接").setView(fields)
+                .setNeutralButton("打开 Tailscale", (dialog, which) -> openTailscale())
+                .setPositiveButton("连接并重试", (dialog, which) -> {
+                    if (TailscaleConnector.isTailscaleAddress(server)) connectTailscale();
+                    else openTailscale();
+                }).setNegativeButton("关闭", null).show();
+    }
     private void openTailscale() {
         Intent launch = getPackageManager().getLaunchIntentForPackage("com.tailscale.ipn");
-        if (launch != null) startActivity(launch);
+        if (launch != null) {
+            try { startActivity(launch); }
+            catch (ActivityNotFoundException | SecurityException error) {
+                Toast.makeText(this, "无法打开 Tailscale，请从手机桌面打开", Toast.LENGTH_LONG).show();
+            }
+        }
         else Toast.makeText(this, "请先安装并登录 Tailscale", Toast.LENGTH_LONG).show();
     }
     private void openExternal(Uri uri) {
@@ -464,12 +535,18 @@ public final class MainActivity extends Activity {
         else moveTaskToBack(true);
     }
     @Override public void onBackPressed() { navigateBack(); }
+    @Override protected void onStart() {
+        super.onStart(); foreground = true; autoConnectTailscale();
+    }
+    @Override protected void onStop() {
+        foreground = false; tailscale.stop(); connectingTailscale = false; super.onStop();
+    }
     @Override protected void onPause() { web.onPause(); web.pauseTimers(); CookieManager.getInstance().flush(); super.onPause(); }
     @Override protected void onResume() { super.onResume(); if (web != null) { web.onResume(); web.resumeTimers(); } }
     @Override protected void onSaveInstanceState(Bundle state) { web.saveState(state); super.onSaveInstanceState(state); }
     @Override protected void onDestroy() {
         if (fileCallback != null) fileCallback.onReceiveValue(null);
-        network.shutdownNow(); web.stopLoading(); content.removeView(web); web.destroy(); super.onDestroy();
+        tailscale.close(); network.shutdownNow(); web.stopLoading(); content.removeView(web); web.destroy(); super.onDestroy();
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

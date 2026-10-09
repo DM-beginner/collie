@@ -12,7 +12,9 @@ from build_apk import ROOT, run, signing_environment
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--serial", default="emulator-5554")
+parser.add_argument("--connection-only", action="store_true", help="Test Tailscale lifecycle without a paired server or real VPN")
 args = parser.parse_args()
+test_class = "TailscaleSmoke" if args.connection_only else "DeviceSmoke"
 if not args.serial.startswith("emulator-"):
     parser.error("This smoke test intentionally accepts emulator serials only.")
 sdk = Path(os.environ["ANDROID_HOME"])
@@ -23,10 +25,10 @@ work = Path(tempfile.mkdtemp(prefix="smoke-", dir=ROOT / "build"))
 classes, dex = work / "classes", work / "dex"
 classes.mkdir(); dex.mkdir()
 manifest = work / "AndroidManifest.xml"
-manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.dmbeginner.colliepocket.tests"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/><application android:label="Collie Pocket test"/><instrumentation android:name=".DeviceSmoke" android:targetPackage="dev.dmbeginner.colliepocket"/></manifest>''', encoding="utf-8")
+manifest.write_text(f'''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.dmbeginner.colliepocket.tests"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/><application android:label="Collie Pocket test"/><instrumentation android:name=".{test_class}" android:targetPackage="dev.dmbeginner.colliepocket"/></manifest>''', encoding="utf-8")
 app_classes = max((ROOT / "build").glob("apk-*/classes.jar"), key=lambda path: path.stat().st_mtime)
 run([java / "bin/javac.exe", "--release", "8", "-encoding", "UTF-8", "-cp", str(platform) + os.pathsep + str(app_classes),
-     "-d", classes, ROOT / "tests/DeviceSmoke.java"])
+     "-d", classes, ROOT / "tests" / (test_class + ".java")])
 jar = work / "classes.jar"
 with zipfile.ZipFile(jar, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for path in classes.rglob("*.class"):
@@ -46,7 +48,7 @@ adb = sdk / "platform-tools/adb.exe"
 run([adb, "-s", args.serial, "install", "-r", apk])
 run([adb, "-s", args.serial, "shell", "am", "force-stop", "dev.dmbeginner.colliepocket"])
 output = subprocess.check_output([str(adb), "-s", args.serial, "shell", "am", "instrument", "-w",
-                                  "dev.dmbeginner.colliepocket.tests/.DeviceSmoke"], text=True, encoding="utf-8")
+                                  "dev.dmbeginner.colliepocket.tests/." + test_class], text=True, encoding="utf-8")
 print(output)
 if "result=PASS:" not in output or "INSTRUMENTATION_CODE: -1" not in output:
-    raise SystemExit("Emulator pairing smoke test failed.")
+    raise SystemExit("Emulator smoke test failed.")
