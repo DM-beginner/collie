@@ -26,6 +26,7 @@ public final class TailscaleConnector {
     }
     public interface Listener {
         void onConnecting();
+        default void onNeedsWake() {}
         void onReady(boolean reconnected);
         void onUnavailable(String reason);
     }
@@ -41,7 +42,9 @@ public final class TailscaleConnector {
     public TailscaleConnector(Backend backend) { this.backend = backend; }
 
     /** Caller starts only while visible and stops before leaving the foreground. */
-    public void start(String server, Listener listener) {
+    public void start(String server, Listener listener) { start(server, true, listener); }
+
+    public void start(String server, boolean allowWake, Listener listener) {
         stop();
         running = true;
         int visit = generation;
@@ -56,21 +59,26 @@ public final class TailscaleConnector {
                     return;
                 }
                 listener.onConnecting();
-                poll(visit, server, SystemClock.elapsedRealtime() + WAIT_MS, listener);
+                long began = SystemClock.elapsedRealtime();
+                poll(visit, server, began, allowWake, false, listener);
             });
         }, 0, TimeUnit.MILLISECONDS);
     }
 
-    private void poll(int visit, String server, long deadline, Listener listener) {
+    private void poll(int visit, String server, long began, boolean allowWake, boolean woken, Listener listener) {
         pending = checks.schedule(() -> {
             if (visit != generation) return;
             boolean reachable = backend.reachable(server);
             deliver(visit, () -> {
                 if (reachable) { running = false; listener.onReady(true); }
-                else if (SystemClock.elapsedRealtime() >= deadline) {
+                else if (SystemClock.elapsedRealtime() - began >= WAIT_MS) {
                     running = false;
                     listener.onUnavailable("自动连接后仍无法访问电脑。请打开 Tailscale 确认已连接；若系统要求 VPN 授权，请点允许，再返回重试。也请确认电脑开机、Collie 正在运行。");
-                } else poll(visit, server, deadline, listener);
+                } else {
+                    boolean needsWake = allowWake && !woken && SystemClock.elapsedRealtime() - began >= 3000;
+                    if (needsWake) listener.onNeedsWake();
+                    if (visit == generation) poll(visit, server, began, allowWake, woken || needsWake, listener);
+                }
             });
         }, 1, TimeUnit.SECONDS);
     }
@@ -78,6 +86,7 @@ public final class TailscaleConnector {
     private void deliver(int visit, Runnable action) {
         main.post(() -> { if (visit == generation) action.run(); });
     }
+    public boolean requestConnectionNow() { return backend.requestConnection(); }
     public boolean isRunning() { return running; }
     public void stop() {
         generation++;

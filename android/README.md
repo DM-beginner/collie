@@ -6,7 +6,7 @@
 
 ## 先在电脑看效果
 
-已经配置好环境的电脑，双击本目录的 **Start-Preview.cmd**。它会打开 `Collie_Preview` 虚拟手机，把 `build/collie-pocket-0.1.4.apk` 安装进去并启动。首次开机可能需要几分钟。关闭虚拟手机窗口不影响电脑上的 herdr。
+已经配置好环境的电脑，双击本目录的 **Start-Preview.cmd**。它会打开 `Collie_Preview` 虚拟手机，把 `build/collie-pocket-0.1.5.apk` 安装进去并启动。首次开机可能需要几分钟。关闭虚拟手机窗口不影响电脑上的 herdr。
 
 新电脑需要先安装 Android SDK、Android Emulator 和 `system-images;android-35;google_apis;x86_64`，在 Device Manager 创建名为 `Collie_Preview` 的 Android 15 虚拟设备，并设置 `ANDROID_HOME`。启动脚本使用电脑的 Tailscale DNS；电脑应先登录 Tailscale。
 
@@ -18,7 +18,7 @@
 4. 在电脑双击本目录的 **Pair-Phone.cmd**（或运行 `collie pair`），得到一个有时限、只能用一次的 8 位配对码。
 5. 在 App 点 `右上角齿轮 → 电脑连接 → 配对这台设备`，输入配对码，为设备取个名字，例如 `my-phone-app`。配对成功后可以操作。
 
-App 与 Chrome 的配对记录独立。直接安装 0.1.4 覆盖旧版，无需先卸载；现有电脑配置、配对和终端/聊天视图设置保留。每台电脑首次连接需单独配对，切换回已配对的原地址无需再次配对。清除 App 数据、卸载后重装或改用另一地址需要重新配对。失去手机时，在各台电脑用 `collie devices` 查看帮助并撤销对应设备。
+App 与 Chrome 的配对记录独立。直接安装 0.1.5 覆盖旧版，无需先卸载；现有电脑配置、配对和终端/聊天视图设置保留。每台电脑首次连接需单独配对，切换回已配对的原地址无需再次配对。清除 App 数据、卸载后重装或改用另一地址需要重新配对。失去手机时，在各台电脑用 `collie devices` 查看帮助并撤销对应设备。
 
 ## 添加 Windows 与 Mac
 
@@ -35,11 +35,13 @@ Space 是 herdr 的工作区。单独创建 Space 不会连接另一台电脑；
 
 ## 自动连接 Tailscale
 
-0.1.4 默认开启「打开 App 时自动连接 Tailscale」，可在右上角齿轮 →「电脑连接」→「Tailscale 自动连接」关闭或手动连接；离线错误页也有「Tailscale 设置」入口。
+0.1.5 默认开启「打开 App 时自动连接 Tailscale」，可在右上角齿轮 →「电脑连接」→「Tailscale 自动连接」关闭或手动连接；离线错误页也有「Tailscale 设置」入口。
 
-每次 App 回到前台、切换电脑或点重试时，仅对 `.ts.net`、`100.64.0.0/10` 或 Tailscale IPv6 地址先读取 `/api/health`。已能访问电脑就直接继续；否则通过 Tailscale 官方安卓接收器请求连接一次，最多等待约 20 秒，访问恢复后自动重新载入当前页面。后台不维持连接循环，退出 App 不断开 VPN，局域网 / 公网地址不自动启动 Tailscale。
+每次 App 回到前台、切换电脑或点重试时，仅对 `.ts.net`、`100.64.0.0/10` 或 Tailscale IPv6 地址先读取 `/api/health`。已能访问电脑就直接继续；否则先请求静默连接。如果几秒后仍不可访问，会自动打开 Tailscale，等待约 3 秒初始化后再发送一次连接请求；此时可能看到 Tailscale 界面，连接后按返回键回到 App 即可继续加载。一分钟内最多自动打开一次，避免电脑关机或网络故障时来回跳转。普通等待最多约 20 秒，局域网 / 公网地址不自动启动 Tailscale，退出 App 不断开 VPN。
 
-此接口不返回连接成功结果，因此以电脑实际可访问为准。需事先安装、登录并授权 Tailscale；若系统撤销了 VPN 授权、另一个 VPN 占用连接或手机限制后台启动，打开 Tailscale 手动确认后返回 App。Android 同一用户一次只允许一个活动 VPN。本功能不申请 VPN 服务权限，也不更改 Tailscale 账号、退出节点或电脑端配置。
+0.1.4 的单次广播在用户手机上不能可靠冷启动 Tailscale；0.1.5 加入前台唤醒兜底。接口不返回连接成功结果，因此以电脑实际可访问为准。需事先安装、登录并授权 Tailscale；若系统撤销了 VPN 授权、另一个 VPN 占用连接或手机限制后台启动，打开 Tailscale 手动确认后返回 App。Android 同一用户一次只允许一个活动 VPN。本功能不申请 VPN 服务权限，也不更改 Tailscale 账号、退出节点或电脑端配置。
+
+启动兼容性依据：[Tailscale 冷启动 / 广播可靠性记录](https://github.com/tailscale/tailscale/issues/18847)。
 
 实现依据：[官方 IPNReceiver](https://github.com/tailscale/tailscale-android/blob/main/android/src/main/java/com/tailscale/ipn/IPNReceiver.java)、[StartVPNWorker](https://github.com/tailscale/tailscale-android/blob/main/android/src/main/java/com/tailscale/ipn/StartVPNWorker.java)。
 
@@ -98,9 +100,12 @@ python test_device.py --serial emulator-5554
 
 # 自动连接生命周期检查：不要求配对，不切换真实 VPN
 python test_device.py --serial emulator-5554 --connection-only
+
+# 实际跨 App 唤醒检查：仅限没有安装真实 Tailscale 的测试模拟器
+python test_device.py --serial emulator-5554 --wake-only
 ```
 
-测试会构建一个单独的 instrumentation 测试 APK，重启主 App 并检查配对凭据是否保留、未配对的写请求是否被拒绝，以及已配对请求是否通过鉴权；还会从齿轮进入设置页，检查「电脑连接」能通过真实点击打开原生电脑管理、脚本点击不会触发原生控制、原有设置仍可见，以及主页和会话没有额外 App 栏或连接底栏。多电脑测试检查迁移、增删改、重复地址验证和选择持久化，再通过模拟器内部两个临时 HTTP 来源验证 WebView 存储隔离、切换后清除返回历史、回到原电脑仍有配对。所有写请求仅指向明确不存在的测试 pane，不向实际 agent 发送输入。自动连接专项检查另覆盖地址识别、只读探测、不重复连接、恢复后继续、缺少 Tailscale、进入后台取消和超时；用隔离后端模拟 VPN 结果，不冒充真手机已连接。测试 APK 不包含在交付的主 APK 中，也不导出或打印配对令牌。
+测试会构建一个单独的 instrumentation 测试 APK，重启主 App 并检查配对凭据是否保留、未配对的写请求是否被拒绝，以及已配对请求是否通过鉴权；还会从齿轮进入设置页，检查「电脑连接」能通过真实点击打开原生电脑管理、脚本点击不会触发原生控制、原有设置仍可见，以及主页和会话没有额外 App 栏或连接底栏。多电脑测试检查迁移、增删改、重复地址验证和选择持久化，再通过模拟器内部两个临时 HTTP 来源验证 WebView 存储隔离、切换后清除返回历史、回到原电脑仍有配对。所有写请求仅指向明确不存在的测试 pane，不向实际 agent 发送输入。自动连接专项检查另覆盖地址识别、只读探测、不重复连接、恢复后继续、缺少 Tailscale、进入后台取消和超时；用隔离后端模拟 VPN 结果。`--wake-only` 在没有真实 Tailscale 的模拟器临时安装一个明确标注的独立测试 App，验证接收器冷启动、打开应用、初始化后延迟发送连接请求，以及返回后不重复跳转；结束后自动卸载测试 App，不覆盖真实 Tailscale、不使用任何登录凭据。测试不冒充真手机的 VPN 已连接，实际 Tailscale 与厂商系统仍需真机确认。测试 APK 不包含在交付的主 APK 中，也不导出或打印配对令牌。
 
 ## 安全边界
 

@@ -61,6 +61,8 @@ public final class MainActivity extends Activity {
     private TailscaleConnector tailscale;
     private boolean foreground;
     private boolean connectingTailscale;
+    private final android.os.Handler wakeHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable wakeRequest;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -113,7 +115,7 @@ public final class MainActivity extends Activity {
                 case 2: if (!server.isEmpty()) { clearError(); web.loadUrl(server); } break;
                 case 3: openTailscale(); break;
                 case 4: showTailscaleSettings(); break;
-                case 5: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.4")
+                case 5: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.5")
                     .setMessage("基于开源 Collie 的非官方安卓客户端（MIT）。\n\n电脑继续运行 Collie 与 herdr，手机使用 Tailscale 连接。各台电脑的配对凭据分别保存在此 App 中。\n\n源码：github.com/DM-beginner/collie，android-apk 分支。\n\n此版本提供前台查看和操作；系统通知、麦克风录音尚未接入。")
                     .setNeutralButton("开源许可", (about, button) -> showLicense())
                     .setPositiveButton("知道了", null).show(); break;
@@ -159,7 +161,7 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.4");
+        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.5");
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         web.setWebViewClient(new WebViewClient() {
@@ -454,11 +456,15 @@ public final class MainActivity extends Activity {
     }
     private void connectTailscale() {
         if (!foreground || server.isEmpty()) return;
-        tailscale.start(server, new TailscaleConnector.Listener() {
+        long now = System.currentTimeMillis();
+        long lastWake = preferences.getLong("last_tailscale_wake", 0);
+        boolean allowWake = now < lastWake || now - lastWake >= 60000;
+        tailscale.start(server, allowWake, new TailscaleConnector.Listener() {
             @Override public void onConnecting() {
                 connectingTailscale = true;
                 showError("正在连接 Tailscale…", "正在等待电脑上线，连接后会自动继续。首次连接或切换过其他 VPN 时，可能需要在 Tailscale 中确认授权。");
             }
+            @Override public void onNeedsWake() { wakeTailscaleForConnection(); }
             @Override public void onReady(boolean reconnected) {
                 connectingTailscale = false;
                 if (reconnected || errorPanel != null || !failedUrl.isEmpty()) {
@@ -475,6 +481,34 @@ public final class MainActivity extends Activity {
             }
         });
     }
+    private void cancelWakeRequest() {
+        if (wakeRequest != null) { wakeHandler.removeCallbacks(wakeRequest); wakeRequest = null; }
+    }
+    private void wakeTailscaleForConnection() {
+        if (!foreground || isFinishing() || isDestroyed()) return;
+        Intent launch = getPackageManager().getLaunchIntentForPackage(TailscaleConnector.PACKAGE);
+        tailscale.stop(); connectingTailscale = false;
+        if (launch == null) {
+            showError("请先安装 Tailscale", "安装、登录并允许 VPN 连接后，再返回 App 重试。"); return;
+        }
+        showError("正在唤醒 Tailscale", "静默连接没有恢复，已尝试打开 Tailscale 并自动请求连接。若出现 VPN 授权请确认；连接后按返回键回到此 App，会继续加载。若电脑关机，返回后不会反复跳转。");
+        try {
+            startActivity(launch);
+            // A cooldown survives activity recreation and prevents bouncing when the PC is offline.
+            preferences.edit().putLong("last_tailscale_wake", System.currentTimeMillis()).apply();
+            cancelWakeRequest();
+            wakeRequest = () -> {
+                wakeRequest = null;
+                if (!isFinishing() && !isDestroyed()) tailscale.requestConnectionNow();
+            };
+            // This single, explicit handoff is allowed to complete while Tailscale is visible.
+            // Ordinary health polling still stops onStop; this is not a background reconnect loop.
+            wakeHandler.postDelayed(wakeRequest, 3000);
+            Toast.makeText(this, "正在唤醒 Tailscale，连接后按返回继续", Toast.LENGTH_LONG).show();
+        } catch (ActivityNotFoundException | SecurityException error) {
+            showError("无法唤醒 Tailscale", "请从手机桌面打开 Tailscale，允许 VPN 连接后返回重试。");
+        }
+    }
     private void showTailscaleSettings() {
         LinearLayout fields = dialogFields();
         Switch automatic = new Switch(this);
@@ -482,10 +516,11 @@ public final class MainActivity extends Activity {
         automatic.setChecked(preferences.getBoolean("auto_tailscale", true));
         fields.addView(automatic);
         TextView info = new TextView(this);
-        info.setText("使用 Tailscale 地址且电脑暂时不可访问时，App 会尝试连接并自动重试。请先安装、登录 Tailscale 并允许 VPN 连接；系统要求重新授权时需要手动确认。切换过其他 VPN 时，可能需要先打开 Tailscale。此设置仅保存在当前手机。退出 App 后保持你的 VPN 状态。");
+        info.setText("使用 Tailscale 地址时先尝试静默连接；几秒后仍不可访问，会自动打开 Tailscale，等初始化后再请求连接。连接后按返回键继续。请先登录并允许 VPN 连接；系统重新授权仍需确认。为避免电脑关机时来回跳转，一分钟内仅自动打开一次。设置仅保存在此手机，退出 App 不断开 VPN。");
         info.setPadding(0, dp(12), 0, 0); fields.addView(info);
         automatic.setOnCheckedChangeListener((button, enabled) -> {
             preferences.edit().putBoolean("auto_tailscale", enabled).apply();
+            cancelWakeRequest();
             tailscale.stop();
             if (connectingTailscale) {
                 connectingTailscale = false;
@@ -536,7 +571,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onBackPressed() { navigateBack(); }
     @Override protected void onStart() {
-        super.onStart(); foreground = true; autoConnectTailscale();
+        super.onStart(); foreground = true; cancelWakeRequest(); autoConnectTailscale();
     }
     @Override protected void onStop() {
         foreground = false; tailscale.stop(); connectingTailscale = false; super.onStop();
@@ -546,7 +581,7 @@ public final class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle state) { web.saveState(state); super.onSaveInstanceState(state); }
     @Override protected void onDestroy() {
         if (fileCallback != null) fileCallback.onReceiveValue(null);
-        tailscale.close(); network.shutdownNow(); web.stopLoading(); content.removeView(web); web.destroy(); super.onDestroy();
+        cancelWakeRequest(); tailscale.close(); network.shutdownNow(); web.stopLoading(); content.removeView(web); web.destroy(); super.onDestroy();
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

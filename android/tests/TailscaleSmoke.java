@@ -25,11 +25,12 @@ public final class TailscaleSmoke extends Instrumentation {
             testReachability();
             testAlreadyReachable();
             testConnectAndRecover();
+            testColdStartFallback();
             testMissingReceiver();
             testStopBeforeRequest();
             testStopWhileWaiting();
             testTimeout();
-            result.putString("result", "PASS: Tailscale addresses; read-only health probe; already-online skip; one request and recovery; missing receiver; foreground cancellation; bounded timeout without reconnect loops.");
+            result.putString("result", "PASS: Tailscale addresses; read-only health probe; already-online skip; one request and recovery; cold-start wake fallback; missing receiver; foreground cancellation; bounded timeout without reconnect loops.");
             finish(-1, result);
         } catch (Throwable failure) {
             result.putString("result", "FAIL: " + failure.getClass().getSimpleName() + ": " + failure.getMessage());
@@ -83,6 +84,9 @@ public final class TailscaleSmoke extends Instrumentation {
         final CountDownLatch connecting = new CountDownLatch(1), done = new CountDownLatch(1);
         final AtomicInteger callbacks = new AtomicInteger();
         volatile boolean ready, reconnected; volatile String reason;
+        final AtomicInteger wakes = new AtomicInteger();
+        volatile Runnable whenWoken;
+        @Override public void onNeedsWake() { wakes.incrementAndGet(); if (whenWoken != null) whenWoken.run(); }
         @Override public void onConnecting() { callbacks.incrementAndGet(); connecting.countDown(); }
         @Override public void onReady(boolean r) { callbacks.incrementAndGet(); ready = true; reconnected = r; done.countDown(); }
         @Override public void onUnavailable(String r) { callbacks.incrementAndGet(); reason = r; done.countDown(); }
@@ -94,13 +98,23 @@ public final class TailscaleSmoke extends Instrumentation {
     }
     private void testAlreadyReachable() throws Exception {
         Backend b = new Backend(); b.readyAfter = 1; Listener l = new Listener(); TailscaleConnector c = start(b, l);
-        try { await(l.done, 5); check(l.ready && !l.reconnected && b.requests.get() == 0, "Already-connected VPN was requested again"); }
+        try { await(l.done, 5); check(l.ready && !l.reconnected && b.requests.get() == 0 && l.wakes.get() == 0, "Already-connected VPN was requested again"); }
         finally { runOnMainSync(c::close); }
     }
     private void testConnectAndRecover() throws Exception {
         Backend b = new Backend(); b.readyAfter = 4; Listener l = new Listener(); TailscaleConnector c = start(b, l);
         try { await(l.connecting, 5); await(l.done, 8); check(l.ready && l.reconnected && b.requests.get() == 1, "Recovery did not complete with exactly one connection request"); }
         finally { runOnMainSync(c::close); }
+    }
+    private void testColdStartFallback() throws Exception {
+        Backend b = new Backend(); Listener l = new Listener();
+        l.whenWoken = () -> b.readyAfter = b.checks.get() + 1;
+        TailscaleConnector c = start(b, l);
+        try {
+            await(l.done, 10);
+            check(l.ready && l.reconnected && l.wakes.get() == 1 && b.requests.get() == 1,
+                    "Cold start did not request a single wake-up then recover");
+        } finally { runOnMainSync(c::close); }
     }
     private void testMissingReceiver() throws Exception {
         Backend b = new Backend(); b.installed = false; Listener l = new Listener(); TailscaleConnector c = start(b, l);
@@ -126,7 +140,7 @@ public final class TailscaleSmoke extends Instrumentation {
     }
     private void testTimeout() throws Exception {
         Backend b = new Backend(); Listener l = new Listener(); TailscaleConnector c = start(b, l);
-        try { await(l.done, 25); check(!l.ready && l.reason != null && b.requests.get() == 1, "Timeout retriggered VPN or reported false success"); }
+        try { await(l.done, 25); check(!l.ready && l.reason != null && b.requests.get() == 1 && l.wakes.get() == 1, "Timeout retriggered VPN or reported false success"); }
         finally { runOnMainSync(c::close); }
     }
     private static void await(CountDownLatch latch, int seconds) throws Exception {

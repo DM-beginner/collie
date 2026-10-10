@@ -236,6 +236,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Android keeps a separate connection for each computer.** Collie Pocket 0.1.2 adds named computer profiles, home-screen switching and profile management. Existing connections migrate automatically; pairing and view preferences remain scoped to each server's origin, and switching drops the previous page and navigation history.
 - **Android connection controls join the existing Settings page.** Collie Pocket 0.1.3 removes the home connection footer and adds a computer-connection entry behind Collie's top-right Settings gear. The entry opens native computer management and pairing without replacing Collie's settings or changing either computer's server.
 - **Android reconnects Tailscale when its computer is unreachable.** Collie Pocket 0.1.4 requests VPN connection once per foreground visit, checks read-only reachability for a bounded period and resumes the current page when the computer returns. A local settings switch and offline manual entry preserve control when VPN consent or another app requires interaction; generic builds contain no personal connection defaults.
+- **Android wakes Tailscale when a silent connection stalls.** Collie Pocket 0.1.5 opens the Tailscale app once after an unsuccessful silent attempt, sends one connection request after initialization and resumes checks on return. A persisted one-minute cooldown prevents repeated app switching when the computer is offline; ordinary polling still stops in the background.
 
 ## [1.17.2] - 2026-10-06
 
