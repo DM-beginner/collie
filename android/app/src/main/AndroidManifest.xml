@@ -23,5 +23,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".TailscaleWakeActivity" android:exported="false"
+            android:excludeFromRecents="true" android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize" />
     </application>
 </manifest>

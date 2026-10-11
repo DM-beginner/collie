@@ -5,6 +5,8 @@ No real pane is targeted. The test APK is separate from the delivered app.
 import argparse
 import os
 import subprocess
+import time
+import re
 from pathlib import Path
 import tempfile
 import zipfile
@@ -48,6 +50,12 @@ run([tools / "apksigner.bat", "sign", "--ks", key, "--ks-key-alias", "collie-poc
      "--ks-pass", "env:COLLIE_SIGNING_PASSWORD", "--out", apk, aligned], env)
 adb = sdk / "platform-tools/adb.exe"
 fixture_installed = False
+standalone_prepared = False
+def wake_mode(mode):
+    output = subprocess.check_output([str(adb), "-s", args.serial, "shell", "am", "instrument", "-w", "-e", "mode", mode,
+                                      "dev.dmbeginner.colliepocket.tests/.TailscaleWakeSmoke"], text=True, encoding="utf-8")
+    if "result=PASS:" not in output or "INSTRUMENTATION_CODE: -1" not in output:
+        raise RuntimeError("Wake test " + mode + " failed: " + output)
 try:
     if args.wake_only:
         present = subprocess.check_output([str(adb), "-s", args.serial, "shell", "pm", "list", "packages", "com.tailscale.ipn"], text=True)
@@ -62,7 +70,7 @@ try:
             for path in fixture_classes.rglob("*.class"): archive.write(path, path.relative_to(fixture_classes).as_posix())
         run([tools / "d8.bat", "--lib", platform, "--min-api", "26", "--output", fixture_dex, fixture_jar])
         fixture_manifest = work / "fixture-manifest.xml"
-        fixture_manifest.write_text("""<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.tailscale.ipn"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/><application android:label="Tailscale Cold Start Test" android:theme="@android:style/Theme.Material.NoActionBar"><activity android:name=".ColdStartFixture" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity><receiver android:name=".IPNReceiver" android:exported="true"/><provider android:name=".ColdStartFixture$Probe" android:authorities="dev.dmbeginner.collie.tests.tailscale-state" android:exported="true"/></application></manifest>""", encoding="utf-8")
+        fixture_manifest.write_text("""<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.tailscale.ipn"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/><application android:label="Tailscale Cold Start Test" android:theme="@android:style/Theme.Material.NoActionBar"><activity android:name=".ColdStartFixture" android:launchMode="singleTask" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity><receiver android:name=".IPNReceiver" android:exported="true"/><provider android:name=".ColdStartFixture$Probe" android:authorities="dev.dmbeginner.collie.tests.tailscale-state" android:exported="true"/></application></manifest>""", encoding="utf-8")
         fixture_unsigned, fixture_aligned, fixture_apk = work / "fixture-unsigned.apk", work / "fixture-aligned.apk", work / "fixture.apk"
         run([tools / "aapt2.exe", "link", "-I", platform, "--manifest", fixture_manifest, "-o", fixture_unsigned])
         with zipfile.ZipFile(fixture_unsigned, "a") as archive: archive.write(fixture_dex / "classes.dex", "classes.dex")
@@ -72,10 +80,35 @@ try:
         fixture_installed = True
     run([adb, "-s", args.serial, "install", "-r", apk])
     run([adb, "-s", args.serial, "shell", "am", "force-stop", "dev.dmbeginner.colliepocket"])
+    if args.wake_only:
+        # Instrumentation can grant background-launch privileges: test the signed app without it.
+        standalone_prepared = True
+        wake_mode("prepare")
+        run([adb, "-s", args.serial, "shell", "am", "start", "-W", "-n", "dev.dmbeginner.colliepocket/.MainActivity"])
+        deadline = time.monotonic() + 35
+        while time.monotonic() < deadline:
+            state = subprocess.check_output([str(adb), "-s", args.serial, "shell", "content", "call", "--uri",
+                "content://dev.dmbeginner.collie.tests.tailscale-state", "--method", "state"], text=True)
+            activities = subprocess.check_output([str(adb), "-s", args.serial, "shell", "dumpsys", "activity", "activities"], text=True)
+            if "after_wake=true" in state and "visible=false" in state and re.search(r"(?:mResumedActivity:|topResumedActivity=).*dev\.dmbeginner\.colliepocket/\.MainActivity", activities):
+                break
+            time.sleep(0.25)
+        else: raise RuntimeError("Ordinary app launch did not return automatically: " + state)
+        if "launches=1" not in state: raise RuntimeError("Standalone wake repeated unexpectedly: " + state)
+        print("PASS: signed Pocket returns automatically after singleTask wake without active instrumentation or injected Back.")
+        run([adb, "-s", args.serial, "shell", "am", "force-stop", "dev.dmbeginner.colliepocket"])
+        wake_mode("restore")
+        standalone_prepared = False
+        run([adb, "-s", args.serial, "shell", "pm", "clear", "com.tailscale.ipn"])
     output = subprocess.check_output([str(adb), "-s", args.serial, "shell", "am", "instrument", "-w",
                                       "dev.dmbeginner.colliepocket.tests/." + test_class], text=True, encoding="utf-8")
     print(output)
     if "result=PASS:" not in output or "INSTRUMENTATION_CODE: -1" not in output:
         raise SystemExit("Emulator smoke test failed.")
 finally:
-    if fixture_installed: run([adb, "-s", args.serial, "uninstall", "com.tailscale.ipn"])
+    try:
+        if standalone_prepared:
+            run([adb, "-s", args.serial, "shell", "am", "force-stop", "dev.dmbeginner.colliepocket"])
+            wake_mode("restore")
+    finally:
+        if fixture_installed: run([adb, "-s", args.serial, "uninstall", "com.tailscale.ipn"])

@@ -20,6 +20,17 @@ public final class ColdStartFixture extends Activity {
         p.edit().putBoolean("awake", true).putInt("launches", p.getInt("launches", 0) + 1).commit();
         TextView text = new TextView(this); text.setText("Tailscale cold-start fixture"); setContentView(text);
     }
+    @Override public void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        SharedPreferences p = getSharedPreferences("probe", 0);
+        p.edit().putInt("launches", p.getInt("launches", 0) + 1).commit();
+    }
+    @Override public void onStart() {
+        super.onStart(); getSharedPreferences("probe", 0).edit().putBoolean("visible", true).commit();
+    }
+    @Override public void onStop() {
+        getSharedPreferences("probe", 0).edit().putBoolean("visible", false).commit(); super.onStop();
+    }
     public static final class IPNReceiver extends BroadcastReceiver {
         @Override public void onReceive(Context context, Intent intent) {
             SharedPreferences p = context.getSharedPreferences("probe", 0);
@@ -33,7 +44,8 @@ public final class ColdStartFixture extends Activity {
             SharedPreferences p = getContext().getSharedPreferences("probe", 0);
             Bundle b = new Bundle();
             b.putInt("launches", p.getInt("launches", 0)); b.putInt("requests", p.getInt("requests", 0));
-            b.putBoolean("after_wake", p.getBoolean("after_wake", false)); return b;
+            b.putBoolean("after_wake", p.getBoolean("after_wake", false));
+            b.putBoolean("visible", p.getBoolean("visible", false)); return b;
         }
         @Override public Cursor query(Uri u, String[] p, String s, String[] a, String o) { return null; }
         @Override public String getType(Uri u) { return null; }

@@ -6,7 +6,7 @@
 
 ## 先在电脑看效果
 
-已经配置好环境的电脑，双击本目录的 **Start-Preview.cmd**。它会打开 `Collie_Preview` 虚拟手机，把 `build/collie-pocket-0.1.5.apk` 安装进去并启动。首次开机可能需要几分钟。关闭虚拟手机窗口不影响电脑上的 herdr。
+已经配置好环境的电脑，双击本目录的 **Start-Preview.cmd**。它会打开 `Collie_Preview` 虚拟手机，把 `build/collie-pocket-0.1.6.apk` 安装进去并启动。首次开机可能需要几分钟。关闭虚拟手机窗口不影响电脑上的 herdr。
 
 新电脑需要先安装 Android SDK、Android Emulator 和 `system-images;android-35;google_apis;x86_64`，在 Device Manager 创建名为 `Collie_Preview` 的 Android 15 虚拟设备，并设置 `ANDROID_HOME`。启动脚本使用电脑的 Tailscale DNS；电脑应先登录 Tailscale。
 
@@ -18,7 +18,7 @@
 4. 在电脑双击本目录的 **Pair-Phone.cmd**（或运行 `collie pair`），得到一个有时限、只能用一次的 8 位配对码。
 5. 在 App 点 `右上角齿轮 → 电脑连接 → 配对这台设备`，输入配对码，为设备取个名字，例如 `my-phone-app`。配对成功后可以操作。
 
-App 与 Chrome 的配对记录独立。直接安装 0.1.5 覆盖旧版，无需先卸载；现有电脑配置、配对和终端/聊天视图设置保留。每台电脑首次连接需单独配对，切换回已配对的原地址无需再次配对。清除 App 数据、卸载后重装或改用另一地址需要重新配对。失去手机时，在各台电脑用 `collie devices` 查看帮助并撤销对应设备。
+App 与 Chrome 的配对记录独立。直接安装 0.1.6 覆盖旧版，无需先卸载；现有电脑配置、配对和终端/聊天视图设置保留。每台电脑首次连接需单独配对，切换回已配对的原地址无需再次配对。清除 App 数据、卸载后重装或改用另一地址需要重新配对。失去手机时，在各台电脑用 `collie devices` 查看帮助并撤销对应设备。
 
 ## 添加 Windows 与 Mac
 
@@ -35,11 +35,11 @@ Space 是 herdr 的工作区。单独创建 Space 不会连接另一台电脑；
 
 ## 自动连接 Tailscale
 
-0.1.5 默认开启「打开 App 时自动连接 Tailscale」，可在右上角齿轮 →「电脑连接」→「Tailscale 自动连接」关闭或手动连接；离线错误页也有「Tailscale 设置」入口。
+0.1.6 默认开启「打开 App 时自动连接 Tailscale」，可在右上角齿轮 →「电脑连接」→「Tailscale 自动连接」关闭或手动连接；离线错误页也有「Tailscale 设置」入口。
 
-每次 App 回到前台、切换电脑或点重试时，仅对 `.ts.net`、`100.64.0.0/10` 或 Tailscale IPv6 地址先读取 `/api/health`。已能访问电脑就直接继续；否则先请求静默连接。如果几秒后仍不可访问，会自动打开 Tailscale，等待约 3 秒初始化后再发送一次连接请求；此时可能看到 Tailscale 界面，连接后按返回键回到 App 即可继续加载。一分钟内最多自动打开一次，避免电脑关机或网络故障时来回跳转。普通等待最多约 20 秒，局域网 / 公网地址不自动启动 Tailscale，退出 App 不断开 VPN。
+每次 App 回到前台、切换电脑或点重试时，仅对 `.ts.net`、`100.64.0.0/10` 或 Tailscale IPv6 地址先读取 `/api/health`。已能访问电脑就直接继续；否则先请求静默连接。如果几秒后仍不可访问，会自动打开 Tailscale，等待约 3 秒初始化后再发送一次连接请求；随后立即将 Collie Pocket 原有任务切回前台，Tailscale 留在后台继续连接，App 恢复电脑可达性检查。唤醒时会短暂显示 Tailscale，系统或厂商若阻止自动返回，可按返回键继续。一分钟内最多自动打开一次，避免电脑关机或网络故障时来回跳转。普通等待最多约 20 秒，局域网 / 公网地址不自动启动 Tailscale，退出 App 不断开 VPN。
 
-0.1.4 的单次广播在用户手机上不能可靠冷启动 Tailscale；0.1.5 加入前台唤醒兜底。接口不返回连接成功结果，因此以电脑实际可访问为准。需事先安装、登录并授权 Tailscale；若系统撤销了 VPN 授权、另一个 VPN 占用连接或手机限制后台启动，打开 Tailscale 手动确认后返回 App。Android 同一用户一次只允许一个活动 VPN。本功能不申请 VPN 服务权限，也不更改 Tailscale 账号、退出节点或电脑端配置。
+0.1.4 的单次广播在用户手机上不能可靠冷启动 Tailscale；0.1.5 加入前台唤醒兜底，0.1.6 加入发出连接请求后的自动返回。接口不返回连接成功结果，因此以电脑实际可访问为准。需事先安装、登录并授权 Tailscale；若系统撤销了 VPN 授权、另一个 VPN 占用连接或手机限制后台启动，使用设置中的「打开 Tailscale」手动处理后返回 App；此手动入口不会定时跳回，以便完成登录或授权。Android 同一用户一次只允许一个活动 VPN。本功能不申请 VPN 服务权限，也不更改 Tailscale 账号、退出节点或电脑端配置。
 
 启动兼容性依据：[Tailscale 冷启动 / 广播可靠性记录](https://github.com/tailscale/tailscale/issues/18847)。
 
@@ -112,3 +112,5 @@ python test_device.py --serial emulator-5554 --wake-only
 HTTP 地址仅接受本地、局域网和 Tailscale 主机；公网地址须使用 HTTPS。HTTPS 证书错误会被拒绝。配对请求仍经过 Collie 的 Origin、Tailscale 身份和一次性配对码检查；本客户端没有添加绕过鉴权的接口。配对令牌仅写入对应 Collie 来源的 App 私有 WebView 存储，不交给外部链接。「电脑连接」条目由 APK 内的适配脚本添加到设置页，仅在已配置的服务器来源执行；原生操作要求主页面上的用户点击，不添加 `JavascriptInterface`。外部网页使用 Google Chrome 打开。应用不申请相机、麦克风或整个存储的权限，文件由系统选择器授权。
 
 工具参考：[Android WebView](https://developer.android.com/develop/ui/views/layout/webapps/webview)、[Android Emulator](https://developer.android.com/studio/run/emulator)、[AGP 8.9 兼容性](https://developer.android.com/build/releases/agp-8-9-0-release-notes)。
+
+自动唤醒由不可外部调用的短暂 `TailscaleWakeActivity` 完成，3 秒后发送连接请求，通过标准 Activity Intent 恢复已有主页面，再销毁中转活动。这样返回发生在 Android 的近期活动启动宽限期内；直接从旧主页面调用 `AppTask.moveToFront()` 或启动返回 Intent，在普通 Android 15 启动测试中会被后台启动规则拦截。此实现无悬浮窗、辅助功能或后台启动特殊权限，不关闭 Tailscale，也不把请求发送当作连接成功。唤醒测试应用使用与真实 Tailscale 相同的 `singleTask` 启动模式，检查无需 Back 的自动返回、外部界面留在后台、冷却防循环和手动入口不被自动返回打断。除了 instrumentation 回归，还会退出测试框架后普通启动签名 APK，检查真正的前台页面，防止测试框架的后台启动特权掩盖失败；临时测试配置会恢复。此测试不创建真实 VPN，真手机及厂商系统的后台返回兼容性仍需实测。
