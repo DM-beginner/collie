@@ -86,7 +86,7 @@ public final class TailscaleWakeSmoke extends Instrumentation {
             check(backup.edit().putString("values", values.toString()).commit(), "Unable to save original emulator settings");
             check(prefs.edit().putString("computers", "[{\"id\":\"wake-test\",\"name\":\"Wake Test\",\"address\":\"http://100.64.0.99:1/\"}]")
                     .putString("active_computer", "wake-test").putString("server", "http://100.64.0.99:1/")
-                    .putBoolean("auto_tailscale", true).putLong("last_tailscale_wake", 0).commit(), "Unable to prepare test");
+                    .putBoolean("auto_tailscale", true).putLong("last_tailscale_wake", System.currentTimeMillis()).commit(), "Unable to prepare recent-wake test");
         } else if ("restore".equals(mode)) {
             if (!backup.contains("values")) return;
             JSONObject values = new JSONObject(backup.getString("values", "{}"));

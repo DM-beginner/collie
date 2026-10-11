@@ -19,7 +19,7 @@ public final class TailscaleWakeActivity extends Activity {
         if (isFinishing() || isDestroyed()) return;
         new TailscaleConnector.AndroidBackend(this).requestConnection();
         try {
-            startActivity(new Intent(this, MainActivity.class).addFlags(
+            startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.EXTRA_TAILSCALE_RETURN, true).addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         } catch (ActivityNotFoundException | SecurityException denied) {
             // OEM restrictions may still require pressing Back; never retry a background launch.

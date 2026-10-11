@@ -44,6 +44,7 @@ import java.util.concurrent.Executors;
 
 /** Standalone Android client: the chosen Collie origin owns its isolated WebView storage. */
 public final class MainActivity extends Activity {
+    static final String EXTRA_TAILSCALE_RETURN = "dev.dmbeginner.colliepocket.TAILSCALE_RETURN";
     private static final int PICK_FILE = 70;
     private static final int BACKGROUND = Color.rgb(16, 24, 23);
     private final ExecutorService network = Executors.newSingleThreadExecutor();
@@ -69,6 +70,11 @@ public final class MainActivity extends Activity {
                     android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::navigateBack);
         }
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
+        // A fresh task is an explicit new visit, including reopening after a Recents swipe.
+        // Keep the cooldown for saved-state recreation and our automatic cross-app return.
+        if (state == null && !getIntent().getBooleanExtra(EXTRA_TAILSCALE_RETURN, false)) {
+            preferences.edit().remove("last_tailscale_wake").apply();
+        }
         tailscale = new TailscaleConnector(this);
         computers = new ComputerProfiles(preferences, getString(R.string.default_server), getString(R.string.default_computers));
         server = computers.active() == null ? "" : computers.active().address;
@@ -113,7 +119,7 @@ public final class MainActivity extends Activity {
                 case 2: if (!server.isEmpty()) { clearError(); web.loadUrl(server); } break;
                 case 3: openTailscale(); break;
                 case 4: showTailscaleSettings(); break;
-                case 5: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.6")
+                case 5: new AlertDialog.Builder(this).setTitle("Collie Pocket 0.1.7")
                     .setMessage("基于开源 Collie 的非官方安卓客户端（MIT）。\n\n电脑继续运行 Collie 与 herdr，手机使用 Tailscale 连接。各台电脑的配对凭据分别保存在此 App 中。\n\n源码：github.com/DM-beginner/collie，android-apk 分支。\n\n此版本提供前台查看和操作；系统通知、麦克风录音尚未接入。")
                     .setNeutralButton("开源许可", (about, button) -> showLicense())
                     .setPositiveButton("知道了", null).show(); break;
@@ -159,7 +165,7 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.6");
+        settings.setUserAgentString(settings.getUserAgentString() + " ColliePocket/0.1.7");
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         web.setWebViewClient(new WebViewClient() {
@@ -489,7 +495,7 @@ public final class MainActivity extends Activity {
         showError("正在唤醒 Tailscale", "正在打开 Tailscale 完成初始化，约 3 秒后请求连接并自动返回。若系统未允许自动返回，请按返回键；若仍无法连接，可从 Tailscale 设置中打开它，完成登录或 VPN 授权后重试。");
         try {
             startActivity(new Intent(this, TailscaleWakeActivity.class));
-            // A cooldown survives activity recreation and prevents bouncing when the PC is offline.
+            // Preserve the cooldown on automatic return, without blocking a fresh user visit.
             preferences.edit().putLong("last_tailscale_wake", System.currentTimeMillis()).apply();
             Toast.makeText(this, "正在唤醒 Tailscale，稍后自动返回", Toast.LENGTH_SHORT).show();
         } catch (ActivityNotFoundException | SecurityException error) {
@@ -503,7 +509,7 @@ public final class MainActivity extends Activity {
         automatic.setChecked(preferences.getBoolean("auto_tailscale", true));
         fields.addView(automatic);
         TextView info = new TextView(this);
-        info.setText("使用 Tailscale 地址时先尝试静默连接；几秒后仍不可访问，会短暂打开 Tailscale，约 3 秒后请求连接并自动返回，Tailscale 留在后台继续连接。请先登录并允许 VPN 连接；若需要重新登录或授权，请用下方“打开 Tailscale”手动处理，此入口不会自动返回。若系统阻止自动返回，请按返回键。为避免反复跳转，一分钟内仅自动打开一次。设置仅保存在此手机，退出 App 不断开 VPN。");
+        info.setText("使用 Tailscale 地址时先尝试静默连接；几秒后仍不可访问，会短暂打开 Tailscale，约 3 秒后请求连接并自动返回，Tailscale 留在后台继续连接。请先登录并允许 VPN 连接；若需要重新登录或授权，请用下方“打开 Tailscale”手动处理，此入口不会自动返回。若系统阻止自动返回，请按返回键。同一次打开中，一分钟内仅自动唤醒一次；从最近任务划掉 App 后重新打开，可再次唤醒。设置仅保存在此手机，退出 App 不断开 VPN。");
         info.setPadding(0, dp(12), 0, 0); fields.addView(info);
         automatic.setOnCheckedChangeListener((button, enabled) -> {
             preferences.edit().putBoolean("auto_tailscale", enabled).apply();

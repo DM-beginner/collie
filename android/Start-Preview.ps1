@@ -1,4 +1,4 @@
-param([string]$Apk = (Join-Path $PSScriptRoot 'build\collie-pocket-0.1.6.apk'))
+param([string]$Apk = (Join-Path $PSScriptRoot 'build\collie-pocket-0.1.7.apk'))
 $ErrorActionPreference = 'Stop'
 $sdk = $env:ANDROID_HOME
 if (-not $sdk) { $sdk = Join-Path $env:LOCALAPPDATA 'collie-android-tools\sdk' }

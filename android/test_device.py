@@ -56,6 +56,22 @@ def wake_mode(mode):
                                       "dev.dmbeginner.colliepocket.tests/.TailscaleWakeSmoke"], text=True, encoding="utf-8")
     if "result=PASS:" not in output or "INSTRUMENTATION_CODE: -1" not in output:
         raise RuntimeError("Wake test " + mode + " failed: " + output)
+
+def wake_state():
+    return subprocess.check_output([str(adb), "-s", args.serial, "shell", "content", "call", "--uri",
+        "content://dev.dmbeginner.collie.tests.tailscale-state", "--method", "state"], text=True)
+
+def await_wake_return(launches):
+    deadline = time.monotonic() + 35
+    while time.monotonic() < deadline:
+        state = wake_state()
+        activities = subprocess.check_output([str(adb), "-s", args.serial, "shell", "dumpsys", "activity", "activities"], text=True)
+        if (f"launches={launches}" in state and "after_wake=true" in state and "visible=false" in state
+                and re.search(r"(?:mResumedActivity:|topResumedActivity=).*dev\.dmbeginner\.colliepocket/\.MainActivity", activities)):
+            return
+        time.sleep(0.25)
+    raise RuntimeError("Ordinary app launch did not wake and return as expected: " + state)
+
 try:
     if args.wake_only:
         present = subprocess.check_output([str(adb), "-s", args.serial, "shell", "pm", "list", "packages", "com.tailscale.ipn"], text=True)
@@ -85,17 +101,20 @@ try:
         standalone_prepared = True
         wake_mode("prepare")
         run([adb, "-s", args.serial, "shell", "am", "start", "-W", "-n", "dev.dmbeginner.colliepocket/.MainActivity"])
-        deadline = time.monotonic() + 35
-        while time.monotonic() < deadline:
-            state = subprocess.check_output([str(adb), "-s", args.serial, "shell", "content", "call", "--uri",
-                "content://dev.dmbeginner.collie.tests.tailscale-state", "--method", "state"], text=True)
-            activities = subprocess.check_output([str(adb), "-s", args.serial, "shell", "dumpsys", "activity", "activities"], text=True)
-            if "after_wake=true" in state and "visible=false" in state and re.search(r"(?:mResumedActivity:|topResumedActivity=).*dev\.dmbeginner\.colliepocket/\.MainActivity", activities):
-                break
-            time.sleep(0.25)
-        else: raise RuntimeError("Ordinary app launch did not return automatically: " + state)
-        if "launches=1" not in state: raise RuntimeError("Standalone wake repeated unexpectedly: " + state)
-        print("PASS: signed Pocket returns automatically after singleTask wake without active instrumentation or injected Back.")
+        await_wake_return(1)
+        # A recreated automatic return must preserve the cooldown even without saved state.
+        run([adb, "-s", args.serial, "shell", "am", "force-stop", "dev.dmbeginner.colliepocket"])
+        run([adb, "-s", args.serial, "shell", "am", "start", "-W", "-n", "dev.dmbeginner.colliepocket/.MainActivity",
+             "--ez", "dev.dmbeginner.colliepocket.TAILSCALE_RETURN", "true"])
+        time.sleep(9)
+        if "launches=1" not in wake_state(): raise RuntimeError("Recreated automatic return discarded its cooldown")
+        # A genuinely fresh task within the same minute must be able to wake again.
+        run([adb, "-s", args.serial, "shell", "am", "force-stop", "dev.dmbeginner.colliepocket"])
+        run([adb, "-s", args.serial, "shell", "am", "start", "-W", "-n", "dev.dmbeginner.colliepocket/.MainActivity"])
+        await_wake_return(2)
+        time.sleep(7)
+        if "launches=2" not in wake_state(): raise RuntimeError("Automatic return caused repeated Tailscale jumps")
+        print("PASS: recent prior wake does not block a fresh task; recreated automatic return preserves cooldown; immediate fresh task wakes again; signed app returns without instrumentation or injected Back.")
         run([adb, "-s", args.serial, "shell", "am", "force-stop", "dev.dmbeginner.colliepocket"])
         wake_mode("restore")
         standalone_prepared = False
