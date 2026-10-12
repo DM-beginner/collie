@@ -107,6 +107,21 @@ python test_device.py --serial emulator-5554 --wake-only
 
 测试会构建一个单独的 instrumentation 测试 APK，重启主 App 并检查配对凭据是否保留、未配对的写请求是否被拒绝，以及已配对请求是否通过鉴权；还会从齿轮进入设置页，检查「电脑连接」能通过真实点击打开原生电脑管理、脚本点击不会触发原生控制、原有设置仍可见，以及主页和会话没有额外 App 栏或连接底栏。多电脑测试检查迁移、增删改、重复地址验证和选择持久化，再通过模拟器内部两个临时 HTTP 来源验证 WebView 存储隔离、切换后清除返回历史、回到原电脑仍有配对。所有写请求仅指向明确不存在的测试 pane，不向实际 agent 发送输入。自动连接专项检查另覆盖地址识别、只读探测、不重复连接、恢复后继续、缺少 Tailscale、进入后台取消和超时；用隔离后端模拟 VPN 结果。`--wake-only` 在没有真实 Tailscale 的模拟器临时安装一个明确标注的独立测试 App，验证接收器冷启动、打开应用、初始化后延迟发送连接请求，以及返回后不重复跳转；结束后自动卸载测试 App，不覆盖真实 Tailscale、不使用任何登录凭据。测试不冒充真手机的 VPN 已连接，实际 Tailscale 与厂商系统仍需真机确认。测试 APK 不包含在交付的主 APK 中，也不导出或打印配对令牌。
 
+## Chat 空白与完整历史
+
+Chat 和 History 读取电脑上的会话日志，Terminal 读取终端当前屏幕。代理使用替代屏幕时，Terminal 没有之前的屏幕可继续加载；完整对话应在 Chat 向上加载旧消息，或打开 History / Show entire history。APK 升级不会补回电脑尚未关联的日志。
+
+在电脑执行 `collie doctor --json`，检查 `integration-codex` 是否报告缺失会话引用。已在 Herdr 内、并且下载了本 fork 源码时，可在项目目录运行下面的维护工具：
+
+```powershell
+python tools/repair-codex-sessions.py
+python tools/repair-codex-sessions.py --apply
+```
+
+第一条只核对，第二条补上能唯一对应的会话 ID；不发送终端输入、不修改终端尺寸、不记录对话正文。工具完整扫描本机 Codex 日志，使用屏幕上的最新消息或代理发出的命令作证据，重复分叉、变化中的会话和工作中却只对应旧日志的会话会跳过。已有引用默认保留；显式使用 `--replace-mismatched` 才会纠正经过核对且正在运行 `codex resume` 的旧 Herdr 引用。界面刷新后读取新关联；需要时重启电脑端 Collie。
+
+更新页升级的是电脑端 Collie。Windows 已设置系统网络代理时，更新程序还需能使用同一代理；下载文件位于本机，手机只负责发起更新并显示结果。只配置已有代理，保留本地和 Tailscale 地址的直连；不要把配对令牌填进代理配置。
+
 ## 安全边界
 
 HTTP 地址仅接受本地、局域网和 Tailscale 主机；公网地址须使用 HTTPS。HTTPS 证书错误会被拒绝。配对请求仍经过 Collie 的 Origin、Tailscale 身份和一次性配对码检查；本客户端没有添加绕过鉴权的接口。配对令牌仅写入对应 Collie 来源的 App 私有 WebView 存储，不交给外部链接。「电脑连接」条目由 APK 内的适配脚本添加到设置页，仅在已配置的服务器来源执行；原生操作要求主页面上的用户点击，不添加 `JavascriptInterface`。外部网页使用 Google Chrome 打开。应用不申请相机、麦克风或整个存储的权限，文件由系统选择器授权。
