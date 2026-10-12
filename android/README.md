@@ -120,6 +120,18 @@ python tools/repair-codex-sessions.py --apply
 
 第一条只核对，第二条补上能唯一对应的会话 ID；不发送终端输入、不修改终端尺寸、不记录对话正文。工具完整扫描本机 Codex 日志，使用屏幕上的最新消息或代理发出的命令作证据，重复分叉、变化中的会话和工作中却只对应旧日志的会话会跳过。已有引用默认保留；显式使用 `--replace-mismatched` 才会纠正经过核对且正在运行 `codex resume` 的旧 Herdr 引用。界面刷新后读取新关联；需要时重启电脑端 Collie。
 
+以上维护工具只修复已有会话。Windows 的 Codex 共享后台服务可能继承旧窗口的 `HERDR_PANE_ID`，使之后的 SessionStart 钩子报到错误窗口。可先运行 `codex --no-daemon` 验证；仅关闭 `daemon_auto_start` 不会阻止连接已经运行的后台服务。
+
+本 fork 提供可撤销的 PowerShell 启动配置：
+
+```powershell
+powershell -NoProfile -File tools/install-herdr-codex-launch.ps1
+```
+
+安装后新开 PowerShell 窗口，正常输入 `codex`、`codex resume` 或 `codex fork`，在 Herdr 内自动加 `--no-daemon`。独立进程使原有受信任的 Herdr 钩子使用当前窗口的环境；首次发送消息后建立日志关联。Herdr 外的调用、`exec` 和管理命令保留原参数，不修改 npm 文件或 Herdr 管理的钩子，不重启已运行的会话。独立进程可能增加多会话的资源开销。这是当前 Windows 启动入口的兼容性修复，不是 Codex 共享服务本身的上游补丁。
+
+安装器保留原 profile 备份；撤销时删除两个用户 PowerShell `profile.ps1` 中的 Collie 注释和下一行 dot-source。已有 shell 可执行安装器打印的 dot-source 命令加载配置。直接调用 `codex.cmd` / `codex.exe`、使用 `-NoProfile` 或其他 shell 时，应手动带 `--no-daemon`。Mac 未应用此配置，需在该电脑单独验证。
+
 更新页升级的是电脑端 Collie。Windows 已设置系统网络代理时，更新程序还需能使用同一代理；下载文件位于本机，手机只负责发起更新并显示结果。只配置已有代理，保留本地和 Tailscale 地址的直连；不要把配对令牌填进代理配置。
 
 ## 安全边界
